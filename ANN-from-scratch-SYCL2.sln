@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35303.130
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ANN-from-scratch-SYCL2", "ANN-from-scratch-SYCL2.vcxproj", "{B6CC75B7-A47D-4058-A815-99B94BC45B14}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "PreviousThings", "PreviousThings", "{DCC5E21D-BCC1-4FA0-AD62-F2546C6B7C35}"
+	ProjectSection(SolutionItems) = preProject
+		ANN-from-scratch-SYCL2.cpp = ANN-from-scratch-SYCL2.cpp
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B6CC75B7-A47D-4058-A815-99B94BC45B14}.Debug|x64.ActiveCfg = Debug|x64
+		{B6CC75B7-A47D-4058-A815-99B94BC45B14}.Debug|x64.Build.0 = Debug|x64
+		{B6CC75B7-A47D-4058-A815-99B94BC45B14}.Release|x64.ActiveCfg = Release|x64
+		{B6CC75B7-A47D-4058-A815-99B94BC45B14}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {02F0EAF9-880E-4F3D-A4ED-AA3158205D71}
+	EndGlobalSection
+EndGlobal
