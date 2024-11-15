@@ -10,25 +10,6 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\ImageNew.cpp" />
-    <ClCompile Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\SanskritExp.cpp" />
-    <ClCompile Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\Source.cpp" />
-    <ClCompile Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\testing_nn_2hidlayers.cpp" />
-    <ClCompile Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\TestSycl.cpp" />
-    <ClCompile Include="..\..\..\Users\ncvn\source\repos\DPCPP-Project1\DPCPP-Project1\DPCPP-Project1.cpp" />
-    <ClCompile Include="..\..\..\Users\ncvn\source\repos\DPCPP-Project1\DPCPP-Project1\MNIST_experiment.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\1DMatrixLib.h" />
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\ImageNew.h" />
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\MatrixLib.h" />
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\NeuralNetwork.h" />
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\NeuralNetworkNew.h" />
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\ANN-from-scratch\SYCLMatrixLib.h" />
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\DPCPP-Project1\DPCPP-Project1\MatrixLib_old.h" />
-    <ClInclude Include="..\..\..\Users\ncvn\source\repos\DPCPP-Project1\DPCPP-Project1\NeuralNetwork1DMat.h" />
-  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{b6cc75b7-a47d-4058-a815-99b94bc45b14}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
