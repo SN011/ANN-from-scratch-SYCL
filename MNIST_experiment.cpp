@@ -1,11 +1,13 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
-#include "C:\Users\ncvn\source\repos\ANN-from-scratch\ImageNew.h"
-#include "C:\Users\ncvn\source\repos\ANN-from-scratch\NeuralNetworkNew.h"
+#include "ImageNew.h"
+#include "NeuralNetworkNew.h"
 #include <random>
 #include <algorithm>
 #include <omp.h>
+#include <chrono> // Required for std::chrono::system_clock
+
 using namespace std;
 
 std::vector<unsigned int> getRGBFromInt(unsigned int x) {
@@ -52,22 +54,60 @@ void loadMNISTData() {
     while (imageFile.read(reinterpret_cast<char*>(imageBuffer.data()), imageSize) &&
         labelFile.read(reinterpret_cast<char*>(&label), 1)) {
         std::vector<float> normalizedImage;
-        for (auto& pixel : imageBuffer) {
-            normalizedImage.push_back(pixel / 255.0f);
+        normalizedImage.reserve(imageSize);
+        for (unsigned char pix : imageBuffer) {
+            normalizedImage.push_back(pix / 255.0f);
         }
-        dataset.push_back(ImageData(normalizedImage, static_cast<int>(label)));
+        dataset.emplace_back(ImageData(normalizedImage, static_cast<int>(label)));
     }
 
     imageFile.close();
     labelFile.close();
 
-    // Split dataset into training and testing sets
-    std::shuffle(dataset.begin(), dataset.end(), std::default_random_engine(0));
-    for (int i = 0; i < dataset.size(); i++) {
-        if (i < (int)(0.9 * dataset.size())) trainingSet.push_back(dataset.at(i));
-        else testingSet.push_back(dataset.at(i));
+    // Group images by label
+    std::vector<std::vector<ImageData>> labelBuckets(10);
+    for (auto& img : dataset) {
+        if (img.label >= 0 && img.label < 10) { // Ensure label is within range
+            labelBuckets[img.label].emplace_back(img);
+        }
     }
+
+    // Define the number of images per label
+    const int imagesPerLabel = 1000;
+    std::vector<ImageData> balancedSubset;
+    balancedSubset.reserve(imagesPerLabel * 10);
+
+    for (int l = 0; l < 10; l++) {
+        int count = 0;
+        for (auto& im : labelBuckets[l]) {
+            if (count >= imagesPerLabel) break;
+            balancedSubset.emplace_back(im);
+            count++;
+        }
+        // If a label has fewer than imagesPerLabel samples, fill the rest by repeating existing samples
+        while (count < imagesPerLabel && !labelBuckets[l].empty()) {
+            balancedSubset.emplace_back(labelBuckets[l][count % labelBuckets[l].size()]);
+            count++;
+        }
+    }
+
+    // Shuffle the balanced subset
+    std::default_random_engine rng(0); // Use a fixed seed for reproducibility
+    std::shuffle(balancedSubset.begin(), balancedSubset.end(), rng);
+
+    // Split into training and testing sets (60% training, 40% testing)
+    int loopto = static_cast<int>(balancedSubset.size());
+    for (int i = 0; i < loopto; i++) {
+        if (i < static_cast<int>(0.6 * loopto))
+            trainingSet.emplace_back(balancedSubset[i]);
+        else
+            testingSet.emplace_back(balancedSubset[i]);
+    }
+
+    std::cout << "Training set size: " << trainingSet.size() << "\n";
+    std::cout << "Testing Set Size: " << testingSet.size() << "\n";
 }
+
 
 void test() {
     int correct = 0;
@@ -95,8 +135,9 @@ void train() {
 }
 
 void batchTrain(int batchSize, int numEpochs) {
+    std::default_random_engine rng(0); // Use a fixed seed for reproducibility
     for (int epoch = 0; epoch < numEpochs; epoch++) {
-        std::shuffle(trainingSet.begin(), trainingSet.end(), std::default_random_engine(std::chrono::system_clock::now().time_since_epoch().count()));
+        std::shuffle(trainingSet.begin(), trainingSet.end(), rng);
         double start = omp_get_wtime();
 
         vector<vector<float>> batchInputs(batchSize, vector<float>(784));
@@ -116,6 +157,22 @@ void batchTrain(int batchSize, int numEpochs) {
 
             // Train on the current batch
             nn.BackPropagateBatch(batchInputs, batchOutputs);
+
+            // Calculate and print loss for the current batch
+            float loss = 0.0f;
+            for (int j = 0; j < currentBatchSize; ++j) {
+                vector<float> outputs_host = nn.FeedForward(batchInputs[j]);
+                int trueLabel = trainingSet[i + j].label;
+                // Ensure the index is within bounds
+                if (trueLabel >= 0 && trueLabel < outputs_host.size()) {
+                    loss -= std::log(outputs_host[trueLabel] + 1e-9f);
+                }
+                //if (i == 0 && j == 0) { // Only print for the very first sample of the first batch
+                //    std::cout << "p(y=label0) for first sample: " << outputs_host[trueLabel] << "\n";
+                //}
+            }
+            loss /= currentBatchSize;
+            //std::cout << "Batch Loss: " << loss << "\n";
         }
 
         std::cout << "Epoch " << epoch + 1 << " completed.\n";
@@ -124,7 +181,7 @@ void batchTrain(int batchSize, int numEpochs) {
 }
 
 int main() {
-    nn.setLearningRate(0.001f);
+    nn.setLearningRate(0.05f);
     std::srand(std::time(0));
 
     double start = omp_get_wtime();
@@ -132,8 +189,13 @@ int main() {
     std::cout << "Loading MNIST data took " << omp_get_wtime() - start << " seconds\n";
     std::cout << "Training set size: " << trainingSet.size() << "\nTesting Set Size: " << testingSet.size() << "\n";
 
+    nn.printDeviceInfo(); // Print SYCL device information
+
     // Train using batch processing
-    batchTrain(64, 10); // 10 epochs with batch size of 64
+    int batchSize = 64;
+    int numEpochs = 10;
+    std::cout << "Training with batch size: " << batchSize << ", for " << numEpochs << " epochs.\n";
+    batchTrain(batchSize, numEpochs); 
 
     test(); // Evaluate the model after training
     return 0;

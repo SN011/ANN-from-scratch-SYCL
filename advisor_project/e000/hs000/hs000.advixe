@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+ <rdmgr>
+  <timestamp type="u64_t">1731691208</timestamp>
+  <hostname>LAPTOP-0BDGDTCK</hostname>
+  <os>windows</os>
+  <product>Intel® Advisor 2024.2.1</product>
+  <buildNumber type="s32_t">615624</buildNumber>
+  <logicalCPUCount type="s32_t">12</logicalCPUCount>
+  <physicalCoreCount type="s32_t">10</physicalCoreCount>
+  <processorPackageCount type="s32_t">1</processorPackageCount>
+  <CPUFrequency type="s64_t">2611000000</CPUFrequency>
+  <CPUFamily type="s32_t">6</CPUFamily>
+  <CPUModel type="s32_t">154</CPUModel>
+  <CPUStepping type="s32_t">4</CPUStepping>
+  <CPUBrandName>12th Gen Intel(R) Core(TM) i7-1255U</CPUBrandName>
+  <isa>avx2</isa>
+  <collectionTimeBegin type="u64_t">1731691208</collectionTimeBegin>
+  <collectionTimeEnd type="u64_t">1731691241</collectionTimeEnd>
+  <finalizationTimeBegin type="u64_t">1731691241</finalizationTimeBegin>
+  <finalizationTimeEnd type="u64_t">1731691265</finalizationTimeEnd>
+ </rdmgr>
+</root>

@@ -26,14 +26,8 @@
     <ClInclude Include="SYCLMatrixLib.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="ANN-from-scratch-SYCL2.cpp" />
-    <ClCompile Include="DPCPP-Project1.cpp" />
     <ClCompile Include="ImageNew.cpp" />
     <ClCompile Include="MNIST_experiment.cpp" />
-    <ClCompile Include="SanskritExp.cpp" />
-    <ClCompile Include="Source.cpp" />
-    <ClCompile Include="testing_nn_2hidlayers.cpp" />
-    <ClCompile Include="TestSycl.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="LICENSE.txt" />
@@ -49,6 +43,7 @@
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>Intel(R) oneAPI DPC++ Compiler 2024</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
+    <UseInteloneMKL>Parallel</UseInteloneMKL>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -83,8 +78,9 @@
       </PrecompiledHeaderFile>
       <SYCLWarningLevel>Level3</SYCLWarningLevel>
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <OpenMP>GenerateParallelCode</OpenMP>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

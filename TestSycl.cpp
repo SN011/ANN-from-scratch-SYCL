@@ -5,7 +5,7 @@
 #include "NeuralNetwork1DMat.h"
 #include <cassert>
 
-int N = 1024;
+int N = 2048;
 void testMatrixMultiply(sycl::queue& q) {
     // int N = 1024;
     Matrix A(N, N);

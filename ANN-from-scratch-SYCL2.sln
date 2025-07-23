@@ -8,6 +8,11 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "PreviousThings", "PreviousThings", "{DCC5E21D-BCC1-4FA0-AD62-F2546C6B7C35}"
 	ProjectSection(SolutionItems) = preProject
 		ANN-from-scratch-SYCL2.cpp = ANN-from-scratch-SYCL2.cpp
+		MNIST_experiment.cpp = MNIST_experiment.cpp
+		SanskritExp.cpp = SanskritExp.cpp
+		Source.cpp = Source.cpp
+		testing_nn_2hidlayers.cpp = testing_nn_2hidlayers.cpp
+		TestSycl.cpp = TestSycl.cpp
 	EndProjectSection
 EndProject
 Global

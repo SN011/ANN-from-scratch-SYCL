@@ -1,0 +1,6 @@
+
+=== Start: [2024/11/15 12:47:06] === 
+Application exit code: 1 
+Error: Analysis was terminated by Ctrl + C. 
+Analysis completed
+=== End: [2024/11/15 12:47:13] === 

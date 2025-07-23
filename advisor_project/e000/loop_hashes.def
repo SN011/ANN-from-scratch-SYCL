@@ -1,0 +1,33 @@
+# hash file version: 3
+1	4	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\ged.dll	36704	36800,36798		0	94	f641f37e21275c893c7a6bb91d75a75a	0	1	0	0	0
+2	15	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\ged.dll	108180	108409,108391		0	211	f641f37e21275c893c7a6bb91d75a75a	0	1	0	0	0
+3	52	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\x64\Debug\ANN-from-scratch-SYCL2.exe	63637	63726	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\SYCLMatrixLib.h	27	89	2e874fb363bb9bf26e3c2908b77f4005	0	1	0	0	0
+4	58	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\x64\Debug\ANN-from-scratch-SYCL2.exe	69366	69455	C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\include\random	306	89	2e874fb363bb9bf26e3c2908b77f4005	0	1	0	0	0
+5	61	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\x64\Debug\ANN-from-scratch-SYCL2.exe	64437	64563	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\SYCLMatrixLib.h	201	126	2e874fb363bb9bf26e3c2908b77f4005	0	1	0	0	0
+6	62	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\x64\Debug\ANN-from-scratch-SYCL2.exe	64409	64583	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\SYCLMatrixLib.h	200	174	2e874fb363bb9bf26e3c2908b77f4005	0	1	0	0	0
+7	65	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\x64\Debug\ANN-from-scratch-SYCL2.exe	64624	64760	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\SYCLMatrixLib.h	207	136	2e874fb363bb9bf26e3c2908b77f4005	0	1	0	0	0
+8	66	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\x64\Debug\ANN-from-scratch-SYCL2.exe	64593	64780	C:\DEV\ParallelAI-Architectures\ANN-from-scratch-SYCL2\SYCLMatrixLib.h	206	187	2e874fb363bb9bf26e3c2908b77f4005	0	1	0	0	0
+9	128	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\OpenCL.dll	7562	7621		0	59	0133d41a546d41db1e7ea7d10d607aad	0	1	0	0	0
+10	134	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\OpenCL.dll	29901	29937		0	36	0133d41a546d41db1e7ea7d10d607aad	0	1	0	0	0
+11	344	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	999392	999402		0	10	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+12	346	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	999152	999671,999722,999716,999728,999613,999716		0	461	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+13	355	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	844800	844823		0	23	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+14	358	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	844753	845095,844894		0	141	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+15	359	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	844613	844908,845037,845095		0	295	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+16	369	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	880352	880474		0	122	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+17	372	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	880328	880517		0	189	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+18	373	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	880304	880561		0	257	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+19	375	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	468704	469191		0	487	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+20	383	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	821488	821534		0	46	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+21	385	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	821296	826186,826180,826174,821922		0	626	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+22	386	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\sycl7d.dll	1432031	1432126,1435776,1432261,1432371,1432625,1432892,1433081,1433216,1433326,1433702,1433864,1434043,1434241,1434758,1434862,1435218,1435418,1435582,1435686		0	3727	25f64395104757e61acbea7146d2124c	0	1	0	0	0
+23	388	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\sycl7d.dll	1427433	1427807,1428047,1428269,1428390,1428493,1428606,1428831,1429047,1429308,1429569,1429780,1429915,1430025,1430567,1430740,1430844,1431187,1431399,1431657,1431911,1432126,1432261,1432371,1432625,1432892,1433081,1433216,1433326,1433702,1433864,1434043,1434241,1434758,1434862,1435218,1435418,1435582,1435686,1435915,1436128,1436412,1436676,1436880,1437831,1437011,1437117,1437575,1437675		0	10517	25f64395104757e61acbea7146d2124c	0	1	0	0	0
+24	392	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\sycl7d.dll	1443430	1443515,1444734,1443632,1443727,1444530,1444619		0	1299	25f64395104757e61acbea7146d2124c	1	1	0	0	0
+25	413	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\sycl7d.dll	2876931	2877022,2879117,2877145,2877243,2877542,2877798,2878067,2878331,2878576,2878783,2878943,2879035		0	2175	25f64395104757e61acbea7146d2124c	1	1	0	0	0
+26	444	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	1561216	1561237		0	21	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+27	450	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	1551552	1551565		0	13	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+28	452	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	819168	819199		0	31	518707fe4c922583ff8490848b422ed6	0	1	0	0	0
+29	456	C:\Program Files (x86)\Intel\oneAPI\advisor\2024.2\bin64\gtpin\gtpin_core.dll	1599568	1599704		0	136	518707fe4c922583ff8490848b422ed6	1	1	0	0	0
+30	476	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\sycl7d.dll	1679954	1684487,1680717,1680700,1681265		0	1697	25f64395104757e61acbea7146d2124c	0	1	0	0	0
+31	478	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\sycl7d.dll	1679917	1680717,1680700,1681265		0	1853	25f64395104757e61acbea7146d2124c	0	1	0	0	0
+32	486	C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\sycl7d.dll	78972	79053		0	693	25f64395104757e61acbea7146d2124c	1	1	0	0	0
