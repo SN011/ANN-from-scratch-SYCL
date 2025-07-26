@@ -1,16 +1,16 @@
-#pragma once
+﻿#pragma once
 #include <vector>
 #include <iostream>
 #include <iomanip>
 #include <cassert>
 #include <functional>
 #include <random>
-#include <CL/sycl.hpp>
+#include <sycl/sycl.hpp>
 #include <oneapi/mkl/blas.hpp> // For oneMKL's GEMM function
 #include <limits> // Required for std::numeric_limits
 
 using namespace std;
-using namespace cl::sycl;
+using namespace sycl;
 
 class Matrix {
 public:
@@ -36,7 +36,8 @@ public:
                 throw std::runtime_error("Failed to allocate USM for Matrix data in copy constructor.");
             }
             q_ptr->memcpy(data, other.data, rows * cols * sizeof(float)).wait();
-        } else {
+        }
+        else {
             data = nullptr; // Should not happen if q_ptr is always set
         }
     }
@@ -64,7 +65,8 @@ public:
                     throw std::runtime_error("Failed to allocate USM for Matrix data in copy assignment.");
                 }
                 q_ptr->memcpy(data, other.data, rows * cols * sizeof(float)).wait();
-            } else {
+            }
+            else {
                 data = nullptr;
             }
         }
@@ -126,104 +128,96 @@ public:
         }
     }
 
-    void multiplyScalar(float n) { // Removed sycl::queue& q as it's a member now
+    void multiplyScalar(float n) {
         int r = rows;
         int c = cols;
-        // float* ptr = data.data(); // Not needed with USM
+        // float* ptr = data.data(); 
 
-        // buffer<float, 1> buf(ptr, range<1>(r * c)); // Not needed with USM
+        // buffer<float, 1> buf(ptr, range<1>(r * c)); 
         q_ptr->submit([&](handler& h) {
-            auto ptr = data; // Directly use USM pointer
+            auto ptr = data;
             h.parallel_for(range<1>(r * c), [=](id<1> i) {
                 ptr[i] *= n;
+                });
             });
-        }); // Removed .wait()
     }
 
-    void addScalar(float n) { // Removed sycl::queue& q
+    void addScalar(float n) {
         int r = rows;
         int c = cols;
-        // float* ptr = data.data(); // Not needed with USM
+        // float* ptr = data.data(); 
 
-        // buffer<float, 1> buf(ptr, range<1>(r * c)); // Not needed with USM
+        // buffer<float, 1> buf(ptr, range<1>(r * c)); 
         q_ptr->submit([&](handler& h) {
-            auto ptr = data; // Directly use USM pointer
+            auto ptr = data;
             h.parallel_for(range<1>(r * c), [=](id<1> i) {
                 ptr[i] += n;
+                });
             });
-        }); // Removed .wait()
     }
 
-    void negate() { // Removed sycl::queue& q
+    void negate() {
         int r = rows;
         int c = cols;
-        // float* ptr = data.data(); // Not needed with USM
 
-        // buffer<float, 1> buf(ptr, range<1>(r * c)); // Not needed with USM
+
         q_ptr->submit([&](handler& h) {
-            auto ptr = data; // Directly use USM pointer
+            auto ptr = data;
             h.parallel_for(range<1>(r * c), [=](id<1> i) {
                 ptr[i] *= -1;
+                });
             });
-        }); // Removed .wait()
     }
 
-    Matrix Negate() { // Removed sycl::queue& q
+    Matrix Negate() {
         Matrix m(rows, cols, *q_ptr); // Pass queue to new Matrix constructor
         int r = rows;
         int c = cols;
-        const float* inPtr = data; // Directly use USM pointer
-        float* outPtr = m.data; // Directly use USM pointer
+        const float* inPtr = data;
+        float* outPtr = m.data;
 
-        // buffer<float, 1> buf_in(inPtr, range<1>(r * c)); // Not needed with USM
-        // buffer<float, 1> buf_out(outPtr, range<1>(r * c)); // Not needed with USM
 
         q_ptr->submit([&](handler& h) {
-            auto inAcc = inPtr; // Directly use USM pointer
-            auto outAcc = outPtr; // Directly use USM pointer
+            auto inAcc = inPtr;
+            auto outAcc = outPtr;
             h.parallel_for(range<1>(r * c), [=](id<1> i) {
                 outAcc[i] = inAcc[i] * -1.0f;
+                });
             });
-        }); // Removed .wait()
 
         return m;
     }
 
-    void add(const Matrix& other) { // Removed sycl::queue& q
+    void add(const Matrix& other) {
         if (rows == other.rows && cols == other.cols) {
             int r = rows;
             int c = cols;
-            float* ptr = data; // Directly use USM pointer
-            const float* optr = other.data; // Directly use USM pointer
-
-            // buffer<float, 1> buf_a(ptr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(optr, range<1>(r * c)); // Not needed with USM
+            float* ptr = data;
+            const float* optr = other.data;
 
             q_ptr->submit([&](handler& h) {
-                auto a = ptr; // Directly use USM pointer
-                auto b = optr; // Directly use USM pointer
+                auto a = ptr;
+                auto b = optr;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     a[i] += b[i];
+                    });
                 });
-            }); // Removed .wait()
         }
+        // ONLY CHECKING IF OTHER IS A COL VEC (BIAS MATRIX)
         else if (rows == other.rows && other.cols == 1 && cols > 1) {
             int r = rows;
             int c = cols;
-            float* ptr = data; // Directly use USM pointer
-            const float* optr = other.data; // Directly use USM pointer
-
-            // buffer<float, 1> buf_a(ptr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(optr, range<1>(r)); // Not needed with USM
+            float* ptr = data;
+            const float* optr = other.data;
 
             q_ptr->submit([&](handler& h) {
-                auto a = ptr; // Directly use USM pointer
-                auto b = optr; // Directly use USM pointer
+                auto a = ptr;
+                auto b = optr;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     int row = i[0] / c;
                     a[i] += b[row];
+                    });
                 });
-            }); // Removed .wait()
         }
         else {
             std::cout << "Dims of matrices not compatible for add(). No changes made.\n";
@@ -236,49 +230,42 @@ public:
             int r = m1.rows;
             int c = m1.cols;
 
-            const float* aPtr = m1.data; // Directly use USM pointer
-            const float* bPtr = m2.data; // Directly use USM pointer
-            float* resPtr = result.data; // Directly use USM pointer
+            const float* aPtr = m1.data;
+            const float* bPtr = m2.data;
+            float* resPtr = result.data;
 
-            // buffer<float, 1> buf_a(aPtr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(bPtr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_c(resPtr, range<1>(r * c)); // Not needed with USM
 
             q.submit([&](handler& h) {
-                auto a = aPtr; // Directly use USM pointer
-                auto b = bPtr; // Directly use USM pointer
-                auto out = resPtr; // Directly use USM pointer
+                auto a = aPtr;
+                auto b = bPtr;
+                auto out = resPtr;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     out[i] = a[i] + b[i];
+                    });
                 });
-            }); // Removed .wait()
             return result;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
-    Matrix Add(const Matrix& other) { // Removed sycl::queue& q
+    Matrix Add(const Matrix& other) {
         if (rows == other.rows && cols == other.cols) {
             Matrix output(rows, cols, *q_ptr); // Pass queue to new Matrix constructor
             int r = rows;
             int c = cols;
 
-            const float* aPtr = data; // Directly use USM pointer
-            const float* bPtr = other.data; // Directly use USM pointer
-            float* outPtr = output.data; // Directly use USM pointer
-
-            // buffer<float, 1> buf_a(aPtr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(bPtr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_c(outPtr, range<1>(r * c)); // Not needed with USM
+            const float* aPtr = data;
+            const float* bPtr = other.data;
+            float* outPtr = output.data;
 
             q_ptr->submit([&](handler& h) {
-                auto accA = aPtr; // Directly use USM pointer
-                auto accB = bPtr; // Directly use USM pointer
-                auto accC = outPtr; // Directly use USM pointer
+                auto accA = aPtr;
+                auto accB = bPtr;
+                auto accC = outPtr;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     accC[i] = accA[i] + accB[i];
+                    });
                 });
-            }); // Removed .wait()
             return output;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
@@ -290,28 +277,28 @@ public:
             int r = m1.rows;
             int c = m1.cols;
 
-            const float* aPtr = m1.data; // Directly use USM pointer
-            const float* bPtr = m2.data; // Directly use USM pointer
-            float* resPtr = result.data; // Directly use USM pointer
+            const float* aPtr = m1.data;
+            const float* bPtr = m2.data;
+            float* resPtr = result.data;
 
-            // buffer<float, 1> buf_a(aPtr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(bPtr, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_c(resPtr, range<1>(r * c)); // Not needed with USM
+            // buffer<float, 1> buf_a(aPtr, range<1>(r * c)); 
+            // buffer<float, 1> buf_b(bPtr, range<1>(r * c)); 
+            // buffer<float, 1> buf_c(resPtr, range<1>(r * c)); 
 
             q.submit([&](handler& h) {
-                auto a = aPtr; // Directly use USM pointer
-                auto b = bPtr; // Directly use USM pointer
-                auto out = resPtr; // Directly use USM pointer
+                auto a = aPtr;
+                auto b = bPtr;
+                auto out = resPtr;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     out[i] = a[i] - b[i];
+                    });
                 });
-            }); // Removed .wait()
             return result;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
-    void multiply(const Matrix& other) { // Removed sycl::queue& q
+    void multiply(const Matrix& other) {
         if (cols != other.rows) {
             throw std::invalid_argument("Matrix dimensions do not match for multiplication.");
         }
@@ -323,7 +310,7 @@ public:
         // Here, alpha = 1.0f, beta = 0.0f, C is initialized to zeros (implicitly by Matrix constructor)
         try {
             oneapi::mkl::blas::row_major::gemm(
-                *q_ptr, 
+                *q_ptr,
                 oneapi::mkl::transpose::nontrans, // transa
                 oneapi::mkl::transpose::nontrans, // transb
                 rows,                             // m (rows of A and C)
@@ -337,7 +324,7 @@ public:
                 0.0f,                             // beta
                 output.data,                      // C data (USM pointer)
                 output.cols                       // ldc (leading dimension of C - number of columns if row-major)
-            ); // Removed .wait()
+            );
         }
         catch (sycl::exception const& e) {
             std::cerr << "SYCL exception caught during GEMM: " << e.what() << std::endl;
@@ -347,7 +334,7 @@ public:
         // This assumes 'output' is a temporary and its USM will be freed by its destructor
         // It is more efficient to swap the data pointers if 'output' is truly meant to replace 'this' data
         // However, for simplicity and to match previous behavior, a memcpy is used for now.
-        q_ptr->memcpy(data, output.data, rows * other.cols * sizeof(float)); // Removed .wait()
+        q_ptr->memcpy(data, output.data, rows * other.cols * sizeof(float));
         // Rows and cols already match output, so no change needed
     }
 
@@ -375,7 +362,7 @@ public:
                 0.0f,
                 result.data, // USM pointer
                 result.cols
-            ); // Removed .wait()
+            );
         }
         catch (sycl::exception const& e) {
             std::cerr << "SYCL exception caught during static GEMM: " << e.what() << std::endl;
@@ -384,51 +371,48 @@ public:
         return result;
     }
 
-    void elementWiseMult(const Matrix& other) { // Removed sycl::queue& q
+    void elementWiseMult(const Matrix& other) {
         if (rows == other.rows && cols == other.cols) {
             int r = rows;
             int c = cols;
-            float* ptrA = data; // Directly use USM pointer
-            const float* ptrB = other.data; // Directly use USM pointer
+            float* ptrA = data;
+            const float* ptrB = other.data;
 
-            // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(ptrB, range<1>(r * c)); // Not needed with USM
+            // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); 
+            // buffer<float, 1> buf_b(ptrB, range<1>(r * c)); 
 
             q_ptr->submit([&](handler& h) {
-                auto a = ptrA; // Directly use USM pointer
-                auto b = ptrB; // Directly use USM pointer
+                auto a = ptrA;
+                auto b = ptrB;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     a[i] *= b[i];
+                    });
                 });
-            }); // Removed .wait()
         }
         else {
             std::cout << "Dims of matrices must be equal to perform element wise multiplication. Current object remains UNCHANGED.\n";
         }
     }
 
-    Matrix ElementWiseMult(const Matrix& other) { // Removed sycl::queue& q
+    Matrix ElementWiseMult(const Matrix& other) {
         if (rows == other.rows && cols == other.cols) {
             Matrix output(rows, cols, *q_ptr); // Pass queue to new Matrix constructor
             int r = rows;
             int c = cols;
 
-            const float* ptrA = data; // Directly use USM pointer
-            const float* ptrB = other.data; // Directly use USM pointer
-            float* ptrC = output.data; // Directly use USM pointer
+            const float* ptrA = data;
+            const float* ptrB = other.data;
+            float* ptrC = output.data;
 
-            // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(ptrB, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_c(ptrC, range<1>(r * c)); // Not needed with USM
 
             q_ptr->submit([&](handler& h) {
-                auto a = ptrA; // Directly use USM pointer
-                auto b = ptrB; // Directly use USM pointer
-                auto cacc = ptrC; // Directly use USM pointer
+                auto a = ptrA;
+                auto b = ptrB;
+                auto cacc = ptrC;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     cacc[i] = a[i] * b[i];
+                    });
                 });
-            }); // Removed .wait()
 
             return output;
         }
@@ -441,22 +425,19 @@ public:
             int r = m1.rows;
             int c = m1.cols;
 
-            const float* ptrA = m1.data; // Directly use USM pointer
-            const float* ptrB = m2.data; // Directly use USM pointer
-            float* ptrC = output.data; // Directly use USM pointer
+            const float* ptrA = m1.data;
+            const float* ptrB = m2.data;
+            float* ptrC = output.data;
 
-            // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_b(ptrB, range<1>(r * c)); // Not needed with USM
-            // buffer<float, 1> buf_c(ptrC, range<1>(r * c)); // Not needed with USM
 
             q.submit([&](handler& h) {
-                auto a = ptrA; // Directly use USM pointer
-                auto b = ptrB; // Directly use USM pointer
-                auto cacc = ptrC; // Directly use USM pointer
+                auto a = ptrA;
+                auto b = ptrB;
+                auto cacc = ptrC;
                 h.parallel_for(range<1>(r * c), [=](id<1> i) {
                     cacc[i] = a[i] * b[i];
+                    });
                 });
-            }); // Removed .wait()
             return output;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
@@ -465,7 +446,6 @@ public:
     // Transpose operations are inherently host-side and involve data movement.
     // For efficiency with USM, one might prefer to re-think operations that require transpose
     // or use oneMKL functions with transpose flags if available. 
-    // For now, these will involve host-side copies for simplicity given the refactor magnitude.
     void transpose() {
         std::vector<float> host_data(rows * cols);
         q_ptr->memcpy(host_data.data(), data, rows * cols * sizeof(float)).wait();
@@ -487,7 +467,7 @@ public:
         std::vector<float> output_host_data(rows * cols);
         for (int i = 0; i < originalRows; i++) {
             for (int j = 0; j < cols; j++) { // Loop over new cols (original rows)
-                output_host_data[j * originalRows + i] = host_data[i * cols + j]; // This is incorrect, should be output.data[new_index] = old.data[old_index]
+                output_host_data[j * originalRows + i] = host_data[i * cols + j];
             }
         }
         q_ptr->memcpy(data, output_host_data.data(), rows * cols * sizeof(float)).wait();
@@ -495,7 +475,7 @@ public:
 
     Matrix Transpose() const {
         Matrix output(cols, rows, *q_ptr); // Pass queue to new Matrix constructor
-        
+
         std::vector<float> host_data(rows * cols);
         q_ptr->memcpy(host_data.data(), data, rows * cols * sizeof(float)).wait();
 
@@ -511,39 +491,105 @@ public:
     }
 
     static float Sigmoid(float x) {
-        return 1.0f / (1.0f + exp(-x));
+        return 1.0f / (1.0f + std::exp(-x));
     }
 
     static float dSigmoid(float x) {
         return x * (1.0f - x);
     }
 
-    void applySigmoid() { // Removed sycl::queue& q
-        int r = rows;
-        int c = cols;
-        // float* ptr = data.data(); // Not needed with USM
-
-        // buffer<float, 1> buf(ptr, range<1>(r * c)); // Not needed with USM
-        q_ptr->submit([&](handler& h) {
-            auto ptr = data; // Directly use USM pointer
-            h.parallel_for(range<1>(r * c), [=](id<1> i) {
-                ptr[i] = Sigmoid(ptr[i]);
-            });
-        }); // Removed .wait()
+    static float ReLU(float x) {
+        return x > 0.0f ? x : 0.0f;
     }
 
-    void applySigmoidDerivative() { // Removed sycl::queue& q
+    static float dReLU(float x) {
+        return x > 0.0f ? 1.0f : 0.0f;
+    }
+
+    void applyReLU() {
         int r = rows;
         int c = cols;
-        // float* ptr = data.data(); // Not needed with USM
-
-        // buffer<float, 1> buf(ptr, range<1>(r * c)); // Not needed with USM
         q_ptr->submit([&](handler& h) {
-            auto ptr = data; // Directly use USM pointer
+            auto ptr = data;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                ptr[i] = ReLU(ptr[i]);
+                });
+            });
+    }
+
+    void applyReLUDerivative() {
+        int r = rows;
+        int c = cols;
+        q_ptr->submit([&](handler& h) {
+            auto ptr = data;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                ptr[i] = dReLU(ptr[i]);
+                });
+            });
+    }
+
+    static Matrix ApplyReLU(const Matrix& m, sycl::queue& q) {
+        Matrix output(m.rows, m.cols, q);
+        int r = m.rows;
+        int c = m.cols;
+
+        const float* ptrA = m.data;
+        float* ptrOut = output.data;
+
+        q.submit([&](handler& h) {
+            auto a = ptrA;
+            auto b = ptrOut;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                b[i] = ReLU(a[i]);
+                });
+            });
+        return output;
+    }
+
+    static Matrix ApplyReLUDerivative(const Matrix& m, sycl::queue& q) {
+        Matrix output(m.rows, m.cols, q);
+        int r = m.rows;
+        int c = m.cols;
+
+        const float* ptrA = m.data;
+        float* ptrOut = output.data;
+
+        q.submit([&](handler& h) {
+            auto a = ptrA;
+            auto b = ptrOut;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                b[i] = dReLU(a[i]);
+                });
+            });
+        return output;
+    }
+
+    void applySigmoid() {
+        int r = rows;
+        int c = cols;
+        // float* ptr = data.data(); 
+
+        // buffer<float, 1> buf(ptr, range<1>(r * c)); 
+        q_ptr->submit([&](handler& h) {
+            auto ptr = data;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                ptr[i] = Sigmoid(ptr[i]);
+                });
+            });
+    }
+
+    void applySigmoidDerivative() {
+        int r = rows;
+        int c = cols;
+        // float* ptr = data.data(); 
+
+        // buffer<float, 1> buf(ptr, range<1>(r * c)); 
+        q_ptr->submit([&](handler& h) {
+            auto ptr = data;
             h.parallel_for(range<1>(r * c), [=](id<1> i) {
                 ptr[i] = dSigmoid(ptr[i]);
+                });
             });
-        }); // Removed .wait()
     }
 
     static Matrix ApplySigmoid(const Matrix& m, sycl::queue& q) {
@@ -551,19 +597,19 @@ public:
         int r = m.rows;
         int c = m.cols;
 
-        const float* ptrA = m.data; // Directly use USM pointer
-        float* ptrOut = output.data; // Directly use USM pointer
+        const float* ptrA = m.data;
+        float* ptrOut = output.data;
 
-        // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); // Not needed with USM
-        // buffer<float, 1> buf_b(ptrOut, range<1>(r * c)); // Not needed with USM
+        // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); 
+        // buffer<float, 1> buf_b(ptrOut, range<1>(r * c)); 
 
         q.submit([&](handler& h) {
-            auto a = ptrA; // Directly use USM pointer
-            auto b = ptrOut; // Directly use USM pointer
+            auto a = ptrA;
+            auto b = ptrOut;
             h.parallel_for(range<1>(r * c), [=](id<1> i) {
                 b[i] = Sigmoid(a[i]);
+                });
             });
-        }); // Removed .wait()
         return output;
     }
 
@@ -572,25 +618,26 @@ public:
         int r = m.rows;
         int c = m.cols;
 
-        const float* ptrA = m.data; // Directly use USM pointer
-        float* ptrOut = output.data; // Directly use USM pointer
+        const float* ptrA = m.data;
+        float* ptrOut = output.data;
 
-        // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); // Not needed with USM
-        // buffer<float, 1> buf_b(ptrOut, range<1>(r * c)); // Not needed with USM
+        // buffer<float, 1> buf_a(ptrA, range<1>(r * c)); 
+        // buffer<float, 1> buf_b(ptrOut, range<1>(r * c)); 
 
         q.submit([&](handler& h) {
-            auto a = ptrA; // Directly use USM pointer
-            auto b = ptrOut; // Directly use USM pointer
+            auto a = ptrA;
+            auto b = ptrOut;
             h.parallel_for(range<1>(r * c), [=](id<1> i) {
                 b[i] = dSigmoid(a[i]);
+                });
             });
-        }); // Removed .wait()
         return output;
     }
 
     Matrix sumAlongAxis(int axis) const {
         if (axis == 1) {
-            Matrix result(rows, 1, *q_ptr); // Pass queue to new Matrix constructor
+            Matrix result(rows, 1, *q_ptr);
+            // Pass queue to new Matrix constructor
             // For sumAlongAxis, it's simpler to copy to host, compute, and copy back to USM
             // For larger matrices, a SYCL kernel for reduction would be more efficient
             std::vector<float> host_data(rows * cols);
@@ -629,7 +676,7 @@ public:
         Matrix out(m.rows, m.cols, q);
         int R = m.rows, C = m.cols;
         const float* A = m.data;
-        float*       B = out.data;
+        float* B = out.data;
 
         // one work‑group per column
         q.submit([&](sycl::handler& h) {
@@ -648,11 +695,40 @@ public:
 
                 // 3. write normalized value
                 B[row * C + col] = sycl::exp(A[row * C + col] - maxv) / sum;
+                });
             });
-        });
         return out;
+    }
+
+    static float crossEntropy(const Matrix& outputs, const Matrix& targets, sycl::queue& q) {
+        if (outputs.rows != targets.rows || outputs.cols != targets.cols) {
+            throw std::invalid_argument("Outputs and targets matrices must have same dimensions for cross-entropy.");
+        }
+
+        int totalElements = outputs.rows * outputs.cols;
+        const float* outPtr = outputs.data;
+        const float* targetPtr = targets.data;
+
+        // Create a buffer for reduction results (sum of logs)
+        float* sum_log_device = sycl::malloc_shared<float>(1, q);
+        q.memset(sum_log_device, 0, sizeof(float)).wait(); // Initialize to 0
+
+        auto red = sycl::reduction(sum_log_device, sycl::plus<float>());
+
+        q.submit([&](sycl::handler& h) {
+            h.parallel_for(sycl::range<1>(totalElements), red,
+                [=](sycl::id<1> idx, auto& sum) {
+                    sum += -targetPtr[idx] *
+                        sycl::log(outPtr[idx] + 1e-9f);
+                });
+            }).wait();
+        float loss = *sum_log_device;
+        sycl::free(sum_log_device, q);
+
+        return loss / outputs.cols; // Average over the batch size (number of columns)
     }
 };
 
 // template <>
-// struct is_device_copyable<Matrix> : std::true_type {}; // Not needed with USM
+// struct is_device_copyable<Matrix> : std::true_type {}; 
+

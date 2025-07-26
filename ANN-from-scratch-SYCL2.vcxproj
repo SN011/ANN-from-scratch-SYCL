@@ -17,12 +17,17 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="1DMatrixLib.h" />
+    <ClInclude Include="CNN.hpp" />
+    <ClInclude Include="ConvLayer.hpp" />
+    <ClInclude Include="im2col.hpp" />
     <ClInclude Include="ImageNew.h" />
     <ClInclude Include="MatrixLib.h" />
     <ClInclude Include="MatrixLib_old.h" />
+    <ClInclude Include="MaxPool2x2.hpp" />
     <ClInclude Include="NeuralNetwork.h" />
     <ClInclude Include="NeuralNetwork1DMat.h" />
     <ClInclude Include="NeuralNetworkNew.h" />
+    <ClInclude Include="SYCLBackends.h" />
     <ClInclude Include="SYCLMatrixLib.h" />
   </ItemGroup>
   <ItemGroup>
@@ -36,21 +41,24 @@
     <ProjectGuid>{b6cc75b7-a47d-4058-a815-99b94bc45b14}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>ANN_from_scratch_SYCL2</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>Intel(R) oneAPI DPC++ Compiler 2024</PlatformToolset>
+    <PlatformToolset>Intel(R) oneAPI DPC++ Compiler 2025</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <UseInteloneMKL>Parallel</UseInteloneMKL>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>Intel(R) oneAPI DPC++ Compiler 2024</PlatformToolset>
+    <PlatformToolset>Intel C++ Compiler 2024</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
+    <UseInteloneMKL>No</UseInteloneMKL>
+    <UseInteloneTBB>true</UseInteloneTBB>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -69,6 +77,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
+    <PreBuildEventUseInBuild>false</PreBuildEventUseInBuild>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -77,14 +86,23 @@
       <PrecompiledHeaderFile>
       </PrecompiledHeaderFile>
       <SYCLWarningLevel>Level3</SYCLWarningLevel>
-      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;CLANG_OFFLOAD_BUNDLER_NO_FPGA=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/Zc:__cplusplus 
+</AdditionalOptions>
       <OpenMP>GenerateParallelCode</OpenMP>
+      <SpecifySyclTargets>Default</SpecifySyclTargets>
+      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
+      <SYCLOptimization>MinSpace</SYCLOptimization>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalOptions>
+      </AdditionalOptions>
+      <SYCLShowVerboseInformation>true</SYCLShowVerboseInformation>
+      <DisableLinkDeviceLibraries>
+      </DisableLinkDeviceLibraries>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -95,15 +113,26 @@
       </PrecompiledHeaderFile>
       <SYCLWarningLevel>Level3</SYCLWarningLevel>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalOptions>/Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalOptions>/Zc:__cplusplus /Qsycl-no-device-lib=all /Qsycl-device-lib=libm-fp32 /Qsycl-no-rdc  /Qsycl-device-code-split=per_kernel  /Qsycl-max-parallel-link-jobs=4
+ </AdditionalOptions>
+      <OpenMP>GenerateParallelCode</OpenMP>
+      <SYCLOptimization>MinSpace</SYCLOptimization>
+      <SYCLShowVerboseInformation>true</SYCLShowVerboseInformation>
+      <OptimizationDiagnosticLevel>Level3</OptimizationDiagnosticLevel>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>
+      </AdditionalDependencies>
+      <SYCLShowVerboseInformation>true</SYCLShowVerboseInformation>
     </Link>
+    <PreBuildEvent>
+      <Command>chcp 65001 &gt;nul &amp;&amp; "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\icpx.exe" stub.cpp -fsycl -fsycl-link -O2 -fsycl-device-code-split=per_kernel -qmkl -o "$(IntDir)device.lib" -v</Command>
+    </PreBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

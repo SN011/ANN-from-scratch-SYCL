@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "SYCLMatrixLib.h"
 #include <vector>
 #include <cstdlib>
@@ -13,7 +13,7 @@ private:
     vector<int> nn_topology;
     vector<Matrix> weightMatrices;
     vector<Matrix> biasMatrices;
-    sycl::queue q{ sycl::gpu_selector{}, sycl::property_list{ sycl::property::queue::in_order{} } };
+    sycl::queue q{ sycl::gpu_selector{}, sycl::property_list{ sycl::property::queue::in_order {} } };
 
 public:
 
@@ -27,12 +27,12 @@ public:
 
         /*** Modified for USM **/
         for (size_t i = 0; i < nn_topology.size() - 1; i++) {
-            Matrix wts(nn_topology[i + 1], nn_topology[i], q); // Pass queue to constructor
+            Matrix wts(nn_topology[i + 1], nn_topology[i], q);
             // Xavier initialization
-            wts.RandInit(nn_topology[i], nn_topology[i+1]); 
+            wts.RandInit(nn_topology[i], nn_topology[i + 1]);
             weightMatrices.push_back(wts);
 
-            Matrix b(nn_topology[i + 1], 1, q); // Pass queue to constructor
+            Matrix b(nn_topology[i + 1], 1, q);
             // Biases initialized to 0
             biasMatrices.push_back(b);
         }
@@ -56,19 +56,19 @@ public:
     */
 
     vector<float> FeedForward(vector<float> targetInputs) {
-        Matrix inputs = Matrix::fromArr(targetInputs, q); // Pass queue
+        Matrix inputs = Matrix::fromArr(targetInputs, q);
         //inputL->hidden1L
-        Matrix hidden = Matrix::multiply(weightMatrices[0], inputs, q); // Pass queue
-        hidden.add(biasMatrices[0]); // Removed queue
-        hidden.applySigmoid(); // Removed queue
+        Matrix hidden = Matrix::multiply(weightMatrices[0], inputs, q);
+        hidden.add(biasMatrices[0]);
+        hidden.applySigmoid();
         //hidden1L -> hidden2L
-        Matrix hidden2 = Matrix::multiply(weightMatrices[1], hidden, q); // Pass queue
-        hidden2.add(biasMatrices[1]); // Removed queue
-        hidden2.applySigmoid(); // Removed queue
+        Matrix hidden2 = Matrix::multiply(weightMatrices[1], hidden, q);
+        hidden2.add(biasMatrices[1]);
+        hidden2.applySigmoid();
         //hiddenL->outputL
-        Matrix outputs = Matrix::multiply(weightMatrices[2], hidden2, q); // Pass queue
-        outputs.add(biasMatrices[2]); // Removed queue
-        outputs = Matrix::Softmax(outputs, q); // Pass queue
+        Matrix outputs = Matrix::multiply(weightMatrices[2], hidden2, q);
+        outputs.add(biasMatrices[2]);
+        outputs = Matrix::Softmax(outputs, q);
 
         return outputs.toArr();
     }
@@ -76,6 +76,8 @@ public:
     void printDeviceInfo() {
         std::cout << "SYCL Device: " << q.get_device().get_info<sycl::info::device::name>() << std::endl;
     }
+
+    sycl::queue& getQueue() { return q; }
 
     /*
        Precondition: targetOutputs array must have length that is equal to number of output nodes (i.e. nn_topology.get(2))
@@ -101,62 +103,62 @@ public:
 
     void BackPropagate(vector<float> targetInputs, vector<float> targetOutputs) {
         //FeedForward ---------------------------------------------------------   
-        Matrix inputs = Matrix::fromArr(targetInputs, q); // Pass queue
+        Matrix inputs = Matrix::fromArr(targetInputs, q);
         //inputL->hidden1L
-        Matrix hidden = Matrix::multiply(weightMatrices[0], inputs, q); // Pass queue
-        hidden.add(biasMatrices[0]); // Removed queue
-        hidden.applySigmoid(); // Removed queue
+        Matrix hidden = Matrix::multiply(weightMatrices[0], inputs, q);
+        hidden.add(biasMatrices[0]);
+        hidden.applySigmoid();
         //hidden1L -> hidden2L
-        Matrix hidden2 = Matrix::multiply(weightMatrices[1], hidden, q); // Pass queue
-        hidden2.add(biasMatrices[1]); // Removed queue
-        hidden2.applySigmoid(); // Removed queue
+        Matrix hidden2 = Matrix::multiply(weightMatrices[1], hidden, q);
+        hidden2.add(biasMatrices[1]);
+        hidden2.applySigmoid();
         //hiddenL->outputL
-        Matrix outputs = Matrix::multiply(weightMatrices[2], hidden2, q); // Pass queue
-        outputs.add(biasMatrices[2]); // Removed queue
-        outputs = Matrix::Softmax(outputs, q); // Pass queue
+        Matrix outputs = Matrix::multiply(weightMatrices[2], hidden2, q);
+        outputs.add(biasMatrices[2]);
+        outputs = Matrix::Softmax(outputs, q);
         // --------------------------------------------------------------------   
 
         //Target array --> converted to matrix
-        Matrix targets = Matrix::fromArr(targetOutputs, q); // Pass queue
+        Matrix targets = Matrix::fromArr(targetOutputs, q);
 
         //Output errors = targets-outputs (matrix subtraction) - For Softmax + Cross-Entropy, this is simply (outputs - targets)
-        Matrix output_errors = Matrix::subtract(outputs, targets, q); // Pass queue
+        Matrix output_errors = Matrix::subtract(outputs, targets, q);
 
         //Calculate the gradients which will be used to calculate the values by which to tune the weights up or down to get a better prediction from NN
         // With Softmax and Cross-Entropy, the gradient for the output layer is simply output_errors
         Matrix gradients = output_errors; // Removed ApplySigmoidDerivative and elementWiseMult
-        gradients.multiplyScalar(-learningRate); // Flipped sign
+        gradients.multiplyScalar(-learningRate);
 
         //Multiply by the prev layer matrices transposed because this is essentially a backward traversal of the NN
-        Matrix weight_h2o_deltas = Matrix::multiply(gradients, hidden2.Transpose(), q); // Pass queue
-        weightMatrices[2].add(weight_h2o_deltas); // Removed queue
-        biasMatrices[2].add(gradients.sumAlongAxis(1)); // Removed queue
+        Matrix weight_h2o_deltas = Matrix::multiply(gradients, hidden2.Transpose(), q);
+        weightMatrices[2].add(weight_h2o_deltas);
+        biasMatrices[2].add(gradients.sumAlongAxis(1));
         //-----------------------------------------------------------------------------------------------------------------------------------------------
-        
-        Matrix hidden2_errors = Matrix::multiply(weightMatrices[2].Transpose(), output_errors, q); // Pass queue
+
+        Matrix hidden2_errors = Matrix::multiply(weightMatrices[2].Transpose(), output_errors, q);
 
         //Calculate the gradients which will be used to calculate the values by which to tune the weights up or down to get a better prediction from NN
-        Matrix hidden2_gradient = Matrix::ApplySigmoidDerivative(hidden2, q); // Pass queue
-        hidden2_gradient.elementWiseMult(hidden2_errors); // Removed queue
-        hidden2_gradient.multiplyScalar(-learningRate); // Flipped sign
+        Matrix hidden2_gradient = Matrix::ApplySigmoidDerivative(hidden2, q);
+        hidden2_gradient.elementWiseMult(hidden2_errors);
+        hidden2_gradient.multiplyScalar(-learningRate);
 
         //Multiply by the prev layer matrices transposed because this is essentially a backward traversal of the NN
-        Matrix weight_h1h2_deltas = Matrix::multiply(hidden2_gradient, hidden.Transpose(), q); // Pass queue
-        weightMatrices[1].add(weight_h1h2_deltas); // Removed queue
-        biasMatrices[1].add(hidden2_gradient.sumAlongAxis(1)); // Removed queue
+        Matrix weight_h1h2_deltas = Matrix::multiply(hidden2_gradient, hidden.Transpose(), q);
+        weightMatrices[1].add(weight_h1h2_deltas);
+        biasMatrices[1].add(hidden2_gradient.sumAlongAxis(1));
 
         //-----------------------------------------------------------------------------------------------------------------------------------------------
         //Find the hidden errors and do the same thing as above
-        Matrix hidden_errors = Matrix::multiply(weightMatrices[1].Transpose(), hidden2_errors, q); // Pass queue
+        Matrix hidden_errors = Matrix::multiply(weightMatrices[1].Transpose(), hidden2_errors, q);
 
         // Calculate the gradients for hidden layer 1
-        Matrix hidden_gradient = Matrix::ApplySigmoidDerivative(hidden, q); // Pass queue
-        hidden_gradient.elementWiseMult(hidden_errors); // Removed queue
-        hidden_gradient.multiplyScalar(-learningRate); // Flipped sign
+        Matrix hidden_gradient = Matrix::ApplySigmoidDerivative(hidden, q);
+        hidden_gradient.elementWiseMult(hidden_errors);
+        hidden_gradient.multiplyScalar(-learningRate);
 
-        Matrix weight_ih1_deltas = Matrix::multiply(hidden_gradient, inputs.Transpose(), q); // Pass queue
-        weightMatrices[0].add(weight_ih1_deltas); // Removed queue
-        biasMatrices[0].add(hidden_gradient.sumAlongAxis(1)); // Removed queue
+        Matrix weight_ih1_deltas = Matrix::multiply(hidden_gradient, inputs.Transpose(), q);
+        weightMatrices[0].add(weight_ih1_deltas);
+        biasMatrices[0].add(hidden_gradient.sumAlongAxis(1));
     }
 
     void BackPropagateBatch(const vector<vector<float>>& batchInputs, const vector<vector<float>>& batchOutputs) {
@@ -164,7 +166,7 @@ public:
         if (batchSize == 0) return;
 
         // Combine inputs into a batch matrix
-        Matrix inputs(nn_topology[0], batchSize, q); // Pass queue
+        Matrix inputs(nn_topology[0], batchSize, q);
         // Copy data from host vector of vectors to USM. This might be a bottleneck.
         // For true USM efficiency, inputs should ideally be directly managed in USM from the start.
         // For now, copying to USM via a host intermediate for simplicity.
@@ -177,20 +179,20 @@ public:
         q.memcpy(inputs.data, host_inputs_flat.data(), nn_topology[0] * batchSize * sizeof(float)); // Removed .wait()
 
         // FeedForward Step
-        Matrix hidden = Matrix::multiply(weightMatrices[0], inputs, q); // Pass queue
-        hidden.add(biasMatrices[0]); // Removed queue
-        hidden.applySigmoid(); // Removed queue
+        Matrix hidden = Matrix::multiply(weightMatrices[0], inputs, q);
+        hidden.add(biasMatrices[0]);
+        hidden.applySigmoid();
 
-        Matrix hidden2 = Matrix::multiply(weightMatrices[1], hidden, q); // Pass queue
-        hidden2.add(biasMatrices[1]); // Removed queue
-        hidden2.applySigmoid(); // Removed queue
+        Matrix hidden2 = Matrix::multiply(weightMatrices[1], hidden, q);
+        hidden2.add(biasMatrices[1]);
+        hidden2.applySigmoid();
 
-        Matrix outputs = Matrix::multiply(weightMatrices[2], hidden2, q); // Pass queue
-        outputs.add(biasMatrices[2]); // Removed queue
-        outputs = Matrix::Softmax(outputs, q); // Pass queue
+        Matrix outputs = Matrix::multiply(weightMatrices[2], hidden2, q);
+        outputs.add(biasMatrices[2]);
+        outputs = Matrix::Softmax(outputs, q);
 
         // Combine targets into a batch matrix
-        Matrix targets(nn_topology.back(), batchSize, q); // Pass queue
+        Matrix targets(nn_topology.back(), batchSize, q);
         // Copy data from host vector of vectors to USM.
         std::vector<float> host_targets_flat(nn_topology.back() * batchSize);
         for (int i = 0; i < batchSize; i++) {
@@ -201,44 +203,126 @@ public:
         q.memcpy(targets.data, host_targets_flat.data(), nn_topology.back() * batchSize * sizeof(float)); // Removed .wait()
 
         // Output errors = targets - outputs (matrix subtraction)
-        Matrix output_errors = Matrix::subtract(outputs, targets, q); // Pass queue
+        Matrix output_errors = Matrix::subtract(outputs, targets, q);
         output_errors.multiplyScalar(1.0f / batchSize);   //  ← NEW
 
         // Calculate the gradients for output layer
         Matrix gradients = output_errors; // Removed ApplySigmoidDerivative and elementWiseMult
         float lr = learningRate; // NOT lr / batchSize
-        gradients.multiplyScalar(-lr); // Flipped sign
+        gradients.multiplyScalar(-lr);
 
         // Update weights and biases for hidden2 -> output layer
-        Matrix weight_h2o_deltas = Matrix::multiply(gradients, hidden2.Transpose(), q); // Pass queue
-        weightMatrices[2].add(weight_h2o_deltas); // Removed queue
-        biasMatrices[2].add(gradients.sumAlongAxis(1)); // NO extra scaling here
+        Matrix weight_h2o_deltas = Matrix::multiply(gradients, hidden2.Transpose(), q);
+        weightMatrices[2].add(weight_h2o_deltas);
+        biasMatrices[2].add(gradients.sumAlongAxis(1));
 
         // Hidden layer 2 errors
-        Matrix hidden2_errors = Matrix::multiply(weightMatrices[2].Transpose(), output_errors, q); // Pass queue
+        Matrix hidden2_errors = Matrix::multiply(weightMatrices[2].Transpose(), output_errors, q);
 
         // Calculate the gradients for hidden layer 2
-        Matrix hidden2_gradient = Matrix::ApplySigmoidDerivative(hidden2, q); // Pass queue
-        hidden2_gradient.elementWiseMult(hidden2_errors); // Removed queue
-        hidden2_gradient.multiplyScalar(-lr); // Flipped sign
+        Matrix hidden2_gradient = Matrix::ApplySigmoidDerivative(hidden2, q);
+        hidden2_gradient.elementWiseMult(hidden2_errors);
+        hidden2_gradient.multiplyScalar(-lr);
 
         // Update weights and biases for hidden1 -> hidden2 layer
-        Matrix weight_h1h2_deltas = Matrix::multiply(hidden2_gradient, hidden.Transpose(), q); // Pass queue
-        weightMatrices[1].add(weight_h1h2_deltas); // Removed queue
-        biasMatrices[1].add(hidden2_gradient.sumAlongAxis(1)); // NO extra scaling here
+        Matrix weight_h1h2_deltas = Matrix::multiply(hidden2_gradient, hidden.Transpose(), q);
+        weightMatrices[1].add(weight_h1h2_deltas);
+        biasMatrices[1].add(hidden2_gradient.sumAlongAxis(1));
 
         // Hidden layer 1 errors
-        Matrix hidden_errors = Matrix::multiply(weightMatrices[1].Transpose(), hidden2_errors, q); // Pass queue
+        Matrix hidden_errors = Matrix::multiply(weightMatrices[1].Transpose(), hidden2_errors, q);
 
         // Calculate the gradients for hidden layer 1
-        Matrix hidden_gradient = Matrix::ApplySigmoidDerivative(hidden, q); // Pass queue
-        hidden_gradient.elementWiseMult(hidden_errors); // Removed queue
-        hidden_gradient.multiplyScalar(-lr); // Flipped sign
+        Matrix hidden_gradient = Matrix::ApplySigmoidDerivative(hidden, q);
+        hidden_gradient.elementWiseMult(hidden_errors);
+        hidden_gradient.multiplyScalar(-lr);
 
         // Update weights and biases for input -> hidden1 layer
-        Matrix weight_ih1_deltas = Matrix::multiply(hidden_gradient, inputs.Transpose(), q); // Pass queue
-        weightMatrices[0].add(weight_ih1_deltas); // Removed queue
-        biasMatrices[0].add(hidden_gradient.sumAlongAxis(1)); // NO extra scaling here
+        Matrix weight_ih1_deltas = Matrix::multiply(hidden_gradient, inputs.Transpose(), q);
+        weightMatrices[0].add(weight_ih1_deltas);
+        biasMatrices[0].add(hidden_gradient.sumAlongAxis(1));
+    }
+
+    Matrix BackPropagateBatchAndReturnOutputs(const vector<vector<float>>& batchInputs, const vector<vector<float>>& batchOutputs) {
+        int batchSize = batchInputs.size();
+        if (batchSize == 0) return Matrix();
+
+        // Combine inputs into a batch matrix
+        Matrix inputs(nn_topology[0], batchSize, q);
+        std::vector<float> host_inputs_flat(nn_topology[0] * batchSize);
+        for (int i = 0; i < batchSize; i++) {
+            for (int j = 0; j < nn_topology[0]; j++) {
+                host_inputs_flat[j * batchSize + i] = batchInputs[i][j];
+            }
+        }
+        q.memcpy(inputs.data, host_inputs_flat.data(), nn_topology[0] * batchSize * sizeof(float));
+
+        // FeedForward Step
+        Matrix hidden = Matrix::multiply(weightMatrices[0], inputs, q);
+        hidden.add(biasMatrices[0]);
+        hidden.applySigmoid();
+
+        Matrix hidden2 = Matrix::multiply(weightMatrices[1], hidden, q);
+        hidden2.add(biasMatrices[1]);
+        hidden2.applySigmoid();
+
+        Matrix outputs = Matrix::multiply(weightMatrices[2], hidden2, q);
+        outputs.add(biasMatrices[2]);
+        outputs = Matrix::Softmax(outputs, q);
+
+        // Combine targets into a batch matrix
+        Matrix targets(nn_topology.back(), batchSize, q);
+        std::vector<float> host_targets_flat(nn_topology.back() * batchSize);
+        for (int i = 0; i < batchSize; i++) {
+            for (int j = 0; j < nn_topology.back(); j++) {
+                host_targets_flat[j * batchSize + i] = batchOutputs[i][j];
+            }
+        }
+        q.memcpy(targets.data, host_targets_flat.data(), nn_topology.back() * batchSize * sizeof(float));
+
+        // Output errors = targets - outputs (matrix subtraction)
+        Matrix output_errors = Matrix::subtract(outputs, targets, q);
+        output_errors.multiplyScalar(1.0f / batchSize);
+
+        // Calculate the gradients for output layer
+        Matrix gradients = output_errors;
+        float lr = learningRate;
+        gradients.multiplyScalar(-lr);
+
+        // Update weights and biases for hidden2 -> output layer
+        Matrix weight_h2o_deltas = Matrix::multiply(gradients, hidden2.Transpose(), q);
+        weightMatrices[2].add(weight_h2o_deltas);
+        biasMatrices[2].add(gradients.sumAlongAxis(1));
+
+        // Hidden layer 2 errors
+        Matrix hidden2_errors = Matrix::multiply(weightMatrices[2].Transpose(), output_errors, q);
+
+        // Calculate the gradients for hidden layer 2
+        Matrix hidden2_gradient = Matrix::ApplySigmoidDerivative(hidden2, q);
+        hidden2_gradient.elementWiseMult(hidden2_errors);
+        hidden2_gradient.multiplyScalar(-lr);
+
+        // Update weights and biases for hidden1 -> hidden2 layer
+        Matrix weight_h1h2_deltas = Matrix::multiply(hidden2_gradient, hidden.Transpose(), q);
+        weightMatrices[1].add(weight_h1h2_deltas);
+        biasMatrices[1].add(hidden2_gradient.sumAlongAxis(1));
+
+        // Hidden layer 1 errors
+        Matrix hidden_errors = Matrix::multiply(weightMatrices[1].Transpose(), hidden2_errors, q);
+
+        // Calculate the gradients for hidden layer 1
+        Matrix hidden_gradient = Matrix::ApplySigmoidDerivative(hidden, q);
+        hidden_gradient.elementWiseMult(hidden_errors);
+        hidden_gradient.multiplyScalar(-lr);
+
+        // Update weights and biases for input -> hidden1 layer
+        Matrix weight_ih1_deltas = Matrix::multiply(hidden_gradient, inputs.Transpose(), q);
+        weightMatrices[0].add(weight_ih1_deltas);
+        biasMatrices[0].add(hidden_gradient.sumAlongAxis(1));
+        /*std::cout << "Inside BackPropagateBatchAndReturnOutputs: outputs dimensions: " << outputs.rows << "x" << outputs.cols << std::endl;
+        std::cout << "Inside BackPropagateBatchAndReturnOutputs: targets dimensions: " << targets.rows << "x" << targets.cols << std::endl;
+        */
+        return outputs; // Return the outputs matrix
     }
 
 };
