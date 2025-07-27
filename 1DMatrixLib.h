@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <vector>
 #include <iostream>
 #include <iomanip>
@@ -92,7 +92,7 @@ public:
     }
 
     // Instance method Add which does same thing as void add method but returns a new Matrix1D object
-    Matrix1D Add(Matrix1D& other) {
+    Matrix1D Add(Matrix1D other) {
         if (rows == other.rows && cols == other.cols) {
             Matrix1D output(rows, cols);
             for (int i = 0; i < rows * cols; i++) {
@@ -222,7 +222,7 @@ public:
 
     // Neural Network functions
     static float Sigmoid(float x) {
-        return 1.0f / (1 + exp(-x));
+        return 1.0f / (1 + std::exp(-x));
     }
 
     static float dSigmoid(float x) {
@@ -257,6 +257,59 @@ public:
         return output;
     }
 
+    // Per‑column softmax: each column of m is transformed independently.
+    static Matrix1D Softmax(const Matrix1D& m)
+    {
+        Matrix1D out(m.rows, m.cols);      // result
+        int R = m.rows, C = m.cols;
+
+        for (int col = 0; col < C; ++col)
+        {
+            // 1. find max in this column (for numerical stability)
+            float maxv = -std::numeric_limits<float>::infinity();
+            for (int row = 0; row < R; ++row)
+                maxv = std::max(maxv, m.data[row * C + col]);
+
+            // 2. compute exp(..) and running sum
+            float sum = 0.0f;
+            for (int row = 0; row < R; ++row)
+            {
+                float e = std::exp(m.data[row * C + col] - maxv);
+                out.data[row * C + col] = e;
+                sum += e;
+            }
+
+            // 3. normalise
+            for (int row = 0; row < R; ++row)
+                out.data[row * C + col] /= sum + 1e-9f;   
+        }
+        return out;
+    }
+
+    Matrix1D sumAlongAxis(int axis) const {
+        if (axis == 1) {
+            Matrix1D result(rows, 1);
+            // Pass queue to new Matrix constructor
+            // For sumAlongAxis, it's simpler to copy to host, compute, and copy back to USM
+            // For larger matrices, a SYCL kernel for reduction would be more efficient
+            std::vector<float> host_data(rows * cols);
+            
+            std::vector<float> result_host_data(rows);
+            for (int i = 0; i < rows; i++) {
+                float sum = 0.0f;
+                for (int j = 0; j < cols; j++) {
+                    sum += host_data[i * cols + j];
+                }
+                result_host_data[i] = sum;
+            }
+            
+            return result;
+        }
+        else {
+            throw std::invalid_argument("Only axis 1 is implemented.");
+        }
+    }
+
     // Functions to convert from 1d array to Matrix1D and from Matrix1D to 1d array
     // Returns (1 col. Matrix1D) column vector of 'arr.length' no of rows and 1 column
     static Matrix1D fromArr(vector<float>& arr) {
@@ -266,6 +319,7 @@ public:
         }
         return output;
     }
+
 
     // Load Matrix1D elements into array of size [rows*cols]
     vector<float> toArr() {

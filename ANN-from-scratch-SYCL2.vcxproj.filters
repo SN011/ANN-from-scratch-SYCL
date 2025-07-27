@@ -47,18 +47,6 @@
     <ClInclude Include="SYCLBackends.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="MaxPool2x2.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="CNN.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="ConvLayer.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="im2col.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ImageNew.cpp">

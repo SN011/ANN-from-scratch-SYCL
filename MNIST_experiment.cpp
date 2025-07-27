@@ -2,7 +2,8 @@
 #include <fstream>
 #include <vector>
 #include "ImageNew.h"
-#include "CNN.hpp"
+#include "NeuralNetworkNew.h"
+#include "NeuralNetwork1DMat.h"
 #include <random>
 #include <algorithm>
 #include <omp.h>
@@ -168,8 +169,8 @@ void loadCIFAR10Data() {
 
 int globalOutputNodesCount = 10;  // CIFAR-10 has 10 output classes
 // Use CNN instead of fully connected network
-CNN cnn;
-
+NeuralNetwork nn(784,512,256,globalOutputNodesCount);
+NeuralNetwork1DMat cpunn(784, 512, 256, globalOutputNodesCount);
 
 void loadMNISTData() {
     // Load MNIST training data
@@ -248,7 +249,7 @@ void test() {
     for (const auto& testSample : testingSet) {
         vector<float> inputs = testSample.vec;
         int label = testSample.label;
-        vector<float> guess = cnn.FeedForward(inputs);
+        vector<float> guess = nn.FeedForward(inputs);
 
         int predictedLabel = max_element(guess.begin(), guess.end()) - guess.begin();
         if (predictedLabel == label) {
@@ -266,7 +267,7 @@ void train() {
         targets[label] = 1.0f;
         std::vector<std::vector<float>> batchInputs = {inputs};
         std::vector<std::vector<float>> batchTargets = {targets};
-        cnn.BackPropagateBatch(batchInputs, batchTargets);
+        nn.BackPropagateBatch(batchInputs, batchTargets);
     }
 }
 
@@ -292,7 +293,8 @@ void batchTrain(int batchSize, int numEpochs) {
             }
 
             // Train on the current batch and get outputs
-            Matrix outputs_matrix = cnn.BackPropagateBatch(batchInputs, batchOutputs);
+            cpunn.BackPropagateBatchAndReturnOutputs(batchInputs, batchOutputs);
+            nn.BackPropagateBatchAndReturnOutputs(batchInputs, batchOutputs);
 
         }
 
@@ -302,20 +304,21 @@ void batchTrain(int batchSize, int numEpochs) {
 }
 
 int main() {
-    cnn.setLearningRate(0.05f);
+    nn.setLearningRate(0.15f);
+    cpunn.setLearningRate(0.15f);
     std::srand(std::time(0));
 
     double start = omp_get_wtime();
-    loadCIFAR10Data();
-    std::cout << "Loading CIFAR-10 data took " << omp_get_wtime() - start << " seconds\n";
+    loadMNISTData();
+    std::cout << "Loading MNIST data took " << omp_get_wtime() - start << " seconds\n";
     std::cout << "Training set size: " << trainingSet.size() << "\nTesting Set Size: " << testingSet.size() << "\n";
 
-    cnn.printDeviceInfo(); // Print SYCL device information
+    nn.printDeviceInfo(); // Print SYCL device information
 
     // Train using batch processing
-    int batchSize = 32;  // Reduced batch size for CNN
+    int batchSize = 256;  // Reduced batch size for CNN
     int numEpochs = 30;  // More epochs for CNN
-    std::cout << "Training CNN with batch size: " << batchSize << ", for " << numEpochs << " epochs.\n";
+    std::cout << "Training ANN with batch size: " << batchSize << ", for " << numEpochs << " epochs.\n";
     batchTrain(batchSize, numEpochs);
 
     test(); // Evaluate the model after training

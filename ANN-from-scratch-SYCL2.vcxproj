@@ -17,13 +17,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="1DMatrixLib.h" />
-    <ClInclude Include="CNN.hpp" />
-    <ClInclude Include="ConvLayer.hpp" />
-    <ClInclude Include="im2col.hpp" />
     <ClInclude Include="ImageNew.h" />
     <ClInclude Include="MatrixLib.h" />
     <ClInclude Include="MatrixLib_old.h" />
-    <ClInclude Include="MaxPool2x2.hpp" />
     <ClInclude Include="NeuralNetwork.h" />
     <ClInclude Include="NeuralNetwork1DMat.h" />
     <ClInclude Include="NeuralNetworkNew.h" />
