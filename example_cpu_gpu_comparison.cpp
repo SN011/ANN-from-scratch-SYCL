@@ -5,12 +5,14 @@
 #include <iomanip>
 
 /**
- * SYCL Neural Network CPU vs GPU Benchmark Example
+ * SYCL Neural Network CPU vs GPU Benchmark Example - REAL MNIST DATA
  * 
  * This example demonstrates how to use the CPU-optimized SYCL neural network
- * implementation as a baseline for comparing against GPU performance.
+ * implementation as a baseline for comparing against GPU performance using
+ * the actual MNIST dataset (28x28 grayscale handwritten digits).
  * 
  * Key Features:
+ * - Uses REAL MNIST dataset (not synthetic data!)
  * - CPU-optimized SYCL implementation using buffers/accessors instead of USM
  * - GPU implementation using USM for device memory management
  * - Comprehensive performance metrics including throughput, latency, and accuracy
@@ -22,17 +24,18 @@ void runBasicComparison() {
     std::cout << "=== BASIC CPU vs GPU COMPARISON ===" << std::endl;
     
     // Configure benchmark parameters
-    BenchmarkComparison::BenchmarkConfig config;
+    BenchmarkConfig config;
     config.input_size = 784;      // MNIST-like input size
     config.hidden1_size = 128;    // First hidden layer
     config.hidden2_size = 64;     // Second hidden layer  
     config.output_size = 10;      // Classification classes
     config.num_epochs = 10;       // Training epochs
     config.batch_size = 32;       // Batch size for training
-    config.num_samples = 2000;    // Total training samples
+    config.num_samples = 60000;   // Full MNIST training dataset
     config.learning_rate = 0.01f; // Learning rate
     config.verbose = true;        // Print detailed progress
-    config.dataset_name = "basic_comparison";
+    config.dataset_name = "MNIST_basic_comparison";
+    config.random_seed = 42;      // Fixed seed for reproducibility
     
     // Create benchmark instance
     BenchmarkComparison benchmark(config);
@@ -47,11 +50,12 @@ void runBasicComparison() {
     benchmark.saveResultsToCSV(cpu_metrics, gpu_metrics, "basic_comparison.csv");
     
     std::cout << "\n=== ANALYSIS NOTES ===" << std::endl;
-    std::cout << "1. CPU implementation uses buffer/accessor model optimized for host memory" << std::endl;
-    std::cout << "2. GPU implementation uses USM for device memory management" << std::endl;
-    std::cout << "3. Performance differences depend on problem size and hardware capabilities" << std::endl;
-    std::cout << "4. CPU may outperform GPU for small problems due to lower overhead" << std::endl;
-    std::cout << "5. GPU typically excels with larger batch sizes and network dimensions" << std::endl;
+    std::cout << "1. Using REAL MNIST dataset (28x28 grayscale images, 10 classes)" << std::endl;
+    std::cout << "2. CPU implementation uses buffer/accessor model optimized for host memory" << std::endl;
+    std::cout << "3. GPU implementation uses USM for device memory management" << std::endl;
+    std::cout << "4. Performance differences depend on problem size and hardware capabilities" << std::endl;
+    std::cout << "5. CPU may outperform GPU for small problems due to lower overhead" << std::endl;
+    std::cout << "6. GPU typically excels with larger batch sizes and network dimensions" << std::endl;
 }
 
 void runNetworkSizeAnalysis() {
@@ -76,17 +80,18 @@ void runNetworkSizeAnalysis() {
     for (const auto& net : networks) {
         std::cout << "\n--- Testing " << net.name << " network: " << net.description << " ---" << std::endl;
         
-        BenchmarkComparison::BenchmarkConfig config;
+        BenchmarkConfig config;
         config.input_size = 784;
         config.hidden1_size = net.hidden1;
         config.hidden2_size = net.hidden2;
         config.output_size = 10;
         config.num_epochs = 5;
         config.batch_size = 32;
-        config.num_samples = 1000;
+        config.num_samples = 60000;  // Full MNIST dataset
         config.learning_rate = 0.01f;
         config.verbose = false;  // Reduce verbosity for multiple runs
         config.dataset_name = net.name + "_network";
+        config.random_seed = 42;     // Fixed seed for reproducibility
         
         BenchmarkComparison benchmark(config);
         auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
@@ -113,22 +118,23 @@ void runBatchSizeAnalysis() {
     std::cout << "\n=== BATCH SIZE ANALYSIS ===" << std::endl;
     std::cout << "Testing different batch sizes to understand parallelization efficiency" << std::endl;
     
-    std::vector<int> batch_sizes = {1, 4, 8, 16, 32, 64, 128, 256};
+    std::vector<int> batch_sizes = {16, 32, 64, 128, 256, 512, 1024, 2048};
     
     for (int batch_size : batch_sizes) {
         std::cout << "\n--- Testing batch size: " << batch_size << " ---" << std::endl;
         
-        BenchmarkComparison::BenchmarkConfig config;
+        BenchmarkConfig config;
         config.input_size = 784;
         config.hidden1_size = 128;
         config.hidden2_size = 64;
         config.output_size = 10;
         config.num_epochs = 3;
         config.batch_size = batch_size;
-        config.num_samples = 1000;
+        config.num_samples = 60000;  // Full MNIST dataset
         config.learning_rate = 0.01f;
         config.verbose = false;
         config.dataset_name = "batch_" + std::to_string(batch_size);
+        config.random_seed = 42;     // Fixed seed for reproducibility
         
         BenchmarkComparison benchmark(config);
         auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
@@ -167,7 +173,7 @@ void runMemoryUsageAnalysis() {
     for (const auto& test_case : cases) {
         std::cout << "\n--- Testing " << test_case.name << " ---" << std::endl;
         
-        BenchmarkComparison::BenchmarkConfig config;
+        BenchmarkConfig config;
         config.input_size = 784;
         config.hidden1_size = 128;
         config.hidden2_size = 64;
@@ -178,6 +184,7 @@ void runMemoryUsageAnalysis() {
         config.learning_rate = 0.01f;
         config.verbose = false;
         config.dataset_name = test_case.name;
+        config.random_seed = 42;     // Fixed seed for reproducibility
         
         BenchmarkComparison benchmark(config);
         auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
@@ -249,10 +256,10 @@ void demonstrateDeviceInformation() {
 }
 
 int main() {
-    std::cout << "SYCL Neural Network CPU vs GPU Baseline Comparison" << std::endl;
-    std::cout << "====================================================" << std::endl;
+    std::cout << "SYCL Neural Network CPU vs GPU Baseline Comparison - MNIST Dataset" << std::endl;
+    std::cout << "=================================================================" << std::endl;
     std::cout << "This program demonstrates CPU-optimized SYCL neural network" << std::endl;
-    std::cout << "implementations for baseline comparisons in research papers." << std::endl;
+    std::cout << "implementations using REAL MNIST data for baseline comparisons." << std::endl;
     
     try {
         // Show available devices

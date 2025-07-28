@@ -1,6 +1,7 @@
 #pragma once
 #include "NeuralNetworkNew.h"           // GPU version
 #include "NeuralNetworkNew_CPU.h"       // CPU version
+#include "ImageNew.h"                   // For ImageData structure
 #include <vector>
 #include <iostream>
 #include <iomanip>
@@ -9,9 +10,25 @@
 #include <string>
 #include <map>
 #include <random>
+#include <algorithm>
 
 using namespace std;
 
+struct BenchmarkConfig {
+    int input_size = 784;    // MNIST 28x28
+    int hidden1_size = 128;
+    int hidden2_size = 64;
+    int output_size = 10;
+    int num_epochs = 10;
+    int batch_size = 32;
+    int num_samples = 60000; // Full MNIST training dataset (60,000 images)
+    float learning_rate = 0.01f;
+    bool verbose = true;
+    string dataset_name = "MNIST";
+    bool use_fashion_mnist = false;  // true for Fashion-MNIST, false for regular MNIST
+    unsigned int random_seed = 42;   // Fixed seed for reproducible results
+
+};
 class BenchmarkComparison {
 public:
     struct PerformanceMetrics {
@@ -28,48 +45,97 @@ public:
         size_t max_work_group_size;
     };
 
-    struct BenchmarkConfig {
-        int input_size = 784;    // MNIST-like
-        int hidden1_size = 128;
-        int hidden2_size = 64;
-        int output_size = 10;
-        int num_epochs = 10;
-        int batch_size = 32;
-        int num_samples = 1000;
-        float learning_rate = 0.01f;
-        bool verbose = true;
-        string dataset_name = "synthetic";
-    };
+    
 
 private:
     BenchmarkConfig config;
     
-    // Generate synthetic dataset for testing
-    pair<vector<vector<float>>, vector<vector<float>>> generateSyntheticDataset() {
+    // MNIST file paths - same as used in MNIST_experiment.cpp
+    vector<string> MNISTfileVec{
+        "C:\\DEV\\Datasets\\train-images.idx3-ubyte",  // Training images
+        "C:\\DEV\\Datasets\\train-labels.idx1-ubyte",  // Training labels
+        "C:\\DEV\\Datasets\\t10k-images.idx3-ubyte",   // Testing images
+        "C:\\DEV\\Datasets\\t10k-labels.idx1-ubyte"    // Testing labels
+    };
+
+    vector<string> FashionMNISTfileVec{
+        "C:\\DEV\\Datasets\\train-images-idx3-ubyte",  // Training images
+        "C:\\DEV\\Datasets\\train-labels-idx1-ubyte",  // Training labels
+        "C:\\DEV\\Datasets\\t10k-images-idx3-ubyte",   // Testing images
+        "C:\\DEV\\Datasets\\t10k-labels-idx1-ubyte"    // Testing labels
+    };
+    
+    // Load real MNIST dataset using the same approach as MNIST_experiment.cpp
+    pair<vector<vector<float>>, vector<vector<float>>> loadMNISTDataset() {
         vector<vector<float>> inputs;
         vector<vector<float>> targets;
         
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_real_distribution<float> input_dist(0.0f, 1.0f);
-        std::uniform_int_distribution<int> class_dist(0, config.output_size - 1);
+        // Choose which dataset to load
+        vector<string>& fileVec = config.use_fashion_mnist ? FashionMNISTfileVec : MNISTfileVec;
         
-        for (int i = 0; i < config.num_samples; i++) {
-            // Generate random input
-            vector<float> input(config.input_size);
-            for (int j = 0; j < config.input_size; j++) {
-                input[j] = input_dist(gen);
-            }
-            inputs.push_back(input);
-            
-            // Generate one-hot encoded target
-            vector<float> target(config.output_size, 0.0f);
-            int class_label = class_dist(gen);
-            target[class_label] = 1.0f;
-            targets.push_back(target);
+        // Load training data
+        ifstream imageFile(fileVec[0], ios::binary);
+        ifstream labelFile(fileVec[1], ios::binary);
+        
+        if (!imageFile.is_open() || !labelFile.is_open()) {
+            cerr << "ERROR: Cannot open MNIST files!" << std::endl;
+            cerr << "Image file: " << fileVec[0] << std::endl;
+            cerr << "Label file: " << fileVec[1] << std::endl;
+            cerr << "Make sure MNIST dataset files are in the correct location." << std::endl;
+            throw runtime_error("MNIST files not found");
         }
         
-        return make_pair(inputs, targets);
+        // Skip headers (16 bytes for images, 8 bytes for labels)
+        imageFile.seekg(16);
+        labelFile.seekg(8);
+        
+        const int imageSize = 28 * 28;
+        vector<unsigned char> imageBuffer(imageSize);
+        unsigned char label;
+        
+        int samplesLoaded = 0;
+        while (imageFile.read(reinterpret_cast<char*>(imageBuffer.data()), imageSize) &&
+               labelFile.read(reinterpret_cast<char*>(&label), 1) &&
+               samplesLoaded < config.num_samples) {
+            
+            // Normalize image data from 0-255 to 0-1
+            vector<float> normalizedImage;
+            normalizedImage.reserve(imageSize);
+            for (unsigned char pix : imageBuffer) {
+                normalizedImage.push_back(pix / 255.0f);
+            }
+            inputs.push_back(normalizedImage);
+            
+            // Create one-hot encoded target
+            vector<float> target(config.output_size, 0.0f);
+            target[static_cast<int>(label)] = 1.0f;
+            targets.push_back(target);
+            
+            samplesLoaded++;
+        }
+        
+        imageFile.close();
+        labelFile.close();
+        
+        // Shuffle the data for better training using fixed seed for reproducibility
+        vector<size_t> indices(inputs.size());
+        iota(indices.begin(), indices.end(), 0);
+        
+        mt19937 gen(config.random_seed);  // Use fixed seed from config
+        shuffle(indices.begin(), indices.end(), gen);
+        
+        vector<vector<float>> shuffled_inputs, shuffled_targets;
+        for (size_t idx : indices) {
+            shuffled_inputs.push_back(inputs[idx]);
+            shuffled_targets.push_back(targets[idx]);
+        }
+        
+        if (config.verbose) {
+            cout << "Loaded " << samplesLoaded << " MNIST samples from "
+                 << (config.use_fashion_mnist ? "Fashion-MNIST" : "MNIST") << " dataset" << std::endl;
+        }
+        
+        return make_pair(shuffled_inputs, shuffled_targets);
     }
     
     double calculateAccuracy(const vector<vector<float>>& predictions, 
@@ -114,14 +180,14 @@ private:
         metrics.max_work_group_size = device.get_info<sycl::info::device::max_work_group_size>();
         
         if (config.verbose) {
-            cout << "\n=== Benchmarking " << device_type_name << " Implementation ===" << endl;
-            cout << "Device: " << metrics.device_name << endl;
-            cout << "Max Compute Units: " << metrics.max_compute_units << endl;
-            cout << "Max Work Group Size: " << metrics.max_work_group_size << endl;
+            std::cout << "\n=== Benchmarking " << device_type_name << " Implementation ===" << std::endl;
+            std::cout << "Device: " << metrics.device_name << std::endl;
+            std::cout << "Max Compute Units: " << metrics.max_compute_units << std::endl;
+            std::cout << "Max Work Group Size: " << metrics.max_work_group_size << std::endl;
         }
         
-        // Generate dataset
-        auto [inputs, targets] = generateSyntheticDataset();
+        // Load MNIST dataset
+        auto [inputs, targets] = loadMNISTDataset();
         
         // Set learning rate
         network.setLearningRate(config.learning_rate);
@@ -135,7 +201,7 @@ private:
         // Training loop
         for (int epoch = 0; epoch < config.num_epochs; epoch++) {
             if (config.verbose) {
-                cout << "Epoch " << (epoch + 1) << "/" << config.num_epochs << ": ";
+                std::cout << "Epoch " << (epoch + 1) << "/" << config.num_epochs << ": ";
             }
             
             for (int batch_start = 0; batch_start < config.num_samples; batch_start += config.batch_size) {
@@ -179,16 +245,11 @@ private:
             }
             
             float epoch_loss = 0.0f;
-            if constexpr (std::is_same_v<NetworkType, NeuralNetwork_CPU>) {
-                epoch_loss = network.calculateLoss(sample_inputs, sample_targets);
-            } else {
-                // For GPU version, we need to implement calculateLoss or use a workaround
-                // For now, we'll use a placeholder
-                epoch_loss = 1.0f / (epoch + 1); // Placeholder decreasing loss
-            }
+            // Both CPU and GPU versions now have calculateLoss implemented
+            epoch_loss = network.calculateLoss(sample_inputs, sample_targets);
             
             if (config.verbose) {
-                cout << "Loss = " << fixed << setprecision(4) << epoch_loss << endl;
+                std::cout << "Loss = " << std::fixed << std::setprecision(4) << epoch_loss << std::endl;
             }
             
             metrics.final_loss = epoch_loss;
@@ -231,29 +292,29 @@ private:
     }
 
 public:
-    BenchmarkComparison(const BenchmarkConfig& cfg = BenchmarkConfig{}) : config(cfg) {}
+    BenchmarkComparison(const BenchmarkConfig& cfg = {}) : config(cfg) {}
     
     void setConfig(const BenchmarkConfig& cfg) {
         config = cfg;
     }
     
     pair<PerformanceMetrics, PerformanceMetrics> runComparison() {
-        cout << "=== SYCL Neural Network CPU vs GPU Benchmark ===" << endl;
-        cout << "Configuration:" << endl;
-        cout << "  Network: " << config.input_size << "-" << config.hidden1_size 
-             << "-" << config.hidden2_size << "-" << config.output_size << endl;
-        cout << "  Epochs: " << config.num_epochs << endl;
-        cout << "  Batch Size: " << config.batch_size << endl;
-        cout << "  Samples: " << config.num_samples << endl;
-        cout << "  Learning Rate: " << config.learning_rate << endl;
-        cout << "  Dataset: " << config.dataset_name << endl;
-        cout << endl;
+        std::cout << "=== SYCL Neural Network CPU vs GPU Benchmark ===" << std::endl;
+        std::cout << "Configuration:" << std::endl;
+        std::cout << "  Network: " << config.input_size << "-" << config.hidden1_size 
+             << "-" << config.hidden2_size << "-" << config.output_size << std::endl;
+        std::cout << "  Epochs: " << config.num_epochs << std::endl;
+        std::cout << "  Batch Size: " << config.batch_size << std::endl;
+        std::cout << "  Samples: " << config.num_samples << std::endl;
+        std::cout << "  Learning Rate: " << config.learning_rate << std::endl;
+        std::cout << "  Dataset: " << config.dataset_name << std::endl;
+        std::cout << std::endl;
         
-        // Create networks
+        // Create networks with same seed for reproducible comparison
         NeuralNetwork_CPU cpu_network(config.input_size, config.hidden1_size, 
-                                     config.hidden2_size, config.output_size);
+                                     config.hidden2_size, config.output_size, config.random_seed);
         NeuralNetwork gpu_network(config.input_size, config.hidden1_size, 
-                                config.hidden2_size, config.output_size);
+                                config.hidden2_size, config.output_size, config.random_seed);
         
         // Benchmark CPU version
         auto cpu_metrics = benchmarkNetwork(cpu_network, "CPU");
@@ -266,72 +327,72 @@ public:
     
     void printComparison(const PerformanceMetrics& cpu_metrics, 
                         const PerformanceMetrics& gpu_metrics) {
-        cout << "\n=== PERFORMANCE COMPARISON RESULTS ===" << endl;
-        cout << left << setw(25) << "Metric" << setw(15) << "CPU" << setw(15) << "GPU" << setw(15) << "Ratio (GPU/CPU)" << endl;
-        cout << string(70, '-') << endl;
+        std::cout << "\n=== PERFORMANCE COMPARISON RESULTS ===" << std::endl;
+        std::cout << left << std::setw(25) << "Metric" << std::setw(15) << "CPU" << std::setw(15) << "GPU" << std::setw(15) << "Ratio (GPU/CPU)" << std::endl;
+        std::cout << string(70, '-') << std::endl;
         
         // Device Information
-        cout << setw(25) << "Device Name:" << setw(15) << cpu_metrics.device_name.substr(0, 14) 
-             << setw(15) << gpu_metrics.device_name.substr(0, 14) << setw(15) << "-" << endl;
-        cout << setw(25) << "Compute Units:" << setw(15) << cpu_metrics.max_compute_units 
-             << setw(15) << gpu_metrics.max_compute_units 
-             << setw(15) << fixed << setprecision(2) << (double)gpu_metrics.max_compute_units / cpu_metrics.max_compute_units << endl;
+        std::cout << std::setw(25) << "Device Name:" << std::setw(15) << cpu_metrics.device_name.substr(0, 14) 
+             << std::setw(15) << gpu_metrics.device_name.substr(0, 14) << std::setw(15) << "-" << std::endl;
+        std::cout << std::setw(25) << "Compute Units:" << std::setw(15) << cpu_metrics.max_compute_units 
+             << std::setw(15) << gpu_metrics.max_compute_units 
+             << std::setw(15) << std::fixed << std::setprecision(2) << (double)gpu_metrics.max_compute_units / cpu_metrics.max_compute_units << std::endl;
         
         // Performance Metrics
-        cout << setw(25) << "Total Time (s):" << setw(15) << fixed << setprecision(3) << cpu_metrics.total_time 
-             << setw(15) << gpu_metrics.total_time 
-             << setw(15) << (cpu_metrics.total_time / gpu_metrics.total_time) << "x" << endl;
+        std::cout << std::setw(25) << "Total Time (s):" << std::setw(15) << std::fixed << std::setprecision(3) << cpu_metrics.total_time 
+             << std::setw(15) << gpu_metrics.total_time 
+             << std::setw(15) << (cpu_metrics.total_time / gpu_metrics.total_time) << "x" << std::endl;
         
-        cout << setw(25) << "Throughput (samp/s):" << setw(15) << fixed << setprecision(1) << cpu_metrics.throughput_samples_per_sec 
-             << setw(15) << gpu_metrics.throughput_samples_per_sec 
-             << setw(15) << (gpu_metrics.throughput_samples_per_sec / cpu_metrics.throughput_samples_per_sec) << "x" << endl;
+        std::cout << std::setw(25) << "Throughput (samp/s):" << std::setw(15) << std::fixed << std::setprecision(1) << cpu_metrics.throughput_samples_per_sec 
+             << std::setw(15) << gpu_metrics.throughput_samples_per_sec 
+             << std::setw(15) << (gpu_metrics.throughput_samples_per_sec / cpu_metrics.throughput_samples_per_sec) << "x" << std::endl;
         
         if (cpu_metrics.avg_feedforward_time > 0) {
-            cout << setw(25) << "Avg FeedForward (ms):" << setw(15) << fixed << setprecision(3) << cpu_metrics.avg_feedforward_time * 1000 
-                 << setw(15) << gpu_metrics.avg_feedforward_time * 1000 
-                 << setw(15) << (cpu_metrics.avg_feedforward_time / gpu_metrics.avg_feedforward_time) << "x" << endl;
+            std::cout << std::setw(25) << "Avg FeedForward (ms):" << std::setw(15) << std::fixed << std::setprecision(3) << cpu_metrics.avg_feedforward_time * 1000 
+                 << std::setw(15) << gpu_metrics.avg_feedforward_time * 1000 
+                 << std::setw(15) << (cpu_metrics.avg_feedforward_time / gpu_metrics.avg_feedforward_time) << "x" << std::endl;
         }
         
-        cout << setw(25) << "Avg BackProp (ms):" << setw(15) << fixed << setprecision(3) << cpu_metrics.avg_backprop_time * 1000 
-             << setw(15) << gpu_metrics.avg_backprop_time * 1000 
-             << setw(15) << (cpu_metrics.avg_backprop_time / gpu_metrics.avg_backprop_time) << "x" << endl;
+        std::cout << std::setw(25) << "Avg BackProp (ms):" << std::setw(15) << std::fixed << std::setprecision(3) << cpu_metrics.avg_backprop_time * 1000 
+             << std::setw(15) << gpu_metrics.avg_backprop_time * 1000 
+             << std::setw(15) << (cpu_metrics.avg_backprop_time / gpu_metrics.avg_backprop_time) << "x" << std::endl;
         
         // Memory Usage
-        cout << setw(25) << "Memory Usage (MB):" << setw(15) << fixed << setprecision(1) << cpu_metrics.memory_usage_bytes / (1024.0 * 1024.0) 
-             << setw(15) << gpu_metrics.memory_usage_bytes / (1024.0 * 1024.0) 
-             << setw(15) << (double)gpu_metrics.memory_usage_bytes / cpu_metrics.memory_usage_bytes << "x" << endl;
+        std::cout << std::setw(25) << "Memory Usage (MB):" << std::setw(15) << std::fixed << std::setprecision(1) << cpu_metrics.memory_usage_bytes / (1024.0 * 1024.0) 
+             << std::setw(15) << gpu_metrics.memory_usage_bytes / (1024.0 * 1024.0) 
+             << std::setw(15) << (double)gpu_metrics.memory_usage_bytes / cpu_metrics.memory_usage_bytes << "x" << std::endl;
         
         // Quality Metrics
-        cout << setw(25) << "Final Accuracy (%):" << setw(15) << fixed << setprecision(1) << cpu_metrics.accuracy * 100 
-             << setw(15) << gpu_metrics.accuracy * 100 
-             << setw(15) << (gpu_metrics.accuracy / cpu_metrics.accuracy) << "x" << endl;
+        std::cout << std::setw(25) << "Final Accuracy (%):" << std::setw(15) << std::fixed << std::setprecision(1) << cpu_metrics.accuracy * 100 
+             << std::setw(15) << gpu_metrics.accuracy * 100 
+             << std::setw(15) << (gpu_metrics.accuracy / cpu_metrics.accuracy) << "x" << std::endl;
         
-        cout << setw(25) << "Final Loss:" << setw(15) << fixed << setprecision(4) << cpu_metrics.final_loss 
-             << setw(15) << gpu_metrics.final_loss 
-             << setw(15) << (cpu_metrics.final_loss / gpu_metrics.final_loss) << "x" << endl;
+        std::cout << std::setw(25) << "Final Loss:" << std::setw(15) << std::fixed << std::setprecision(4) << cpu_metrics.final_loss 
+             << std::setw(15) << gpu_metrics.final_loss 
+             << std::setw(15) << (cpu_metrics.final_loss / gpu_metrics.final_loss) << "x" << std::endl;
         
-        cout << endl;
+        std::cout << std::endl;
         
         // Summary
-        cout << "=== SUMMARY ===" << endl;
+        std::cout << "=== SUMMARY ===" << std::endl;
         if (gpu_metrics.throughput_samples_per_sec > cpu_metrics.throughput_samples_per_sec) {
-            cout << "GPU is " << fixed << setprecision(2) 
+            std::cout << "GPU is " << std::fixed << std::setprecision(2) 
                  << (gpu_metrics.throughput_samples_per_sec / cpu_metrics.throughput_samples_per_sec) 
-                 << "x faster than CPU in throughput." << endl;
+                 << "x faster than CPU in throughput." << std::endl;
         } else {
-            cout << "CPU is " << fixed << setprecision(2) 
+            std::cout << "CPU is " << std::fixed << std::setprecision(2) 
                  << (cpu_metrics.throughput_samples_per_sec / gpu_metrics.throughput_samples_per_sec) 
-                 << "x faster than GPU in throughput." << endl;
+                 << "x faster than GPU in throughput." << std::endl;
         }
         
         if (gpu_metrics.total_time < cpu_metrics.total_time) {
-            cout << "GPU completed training " << fixed << setprecision(2) 
+            std::cout << "GPU completed training " << std::fixed << std::setprecision(2) 
                  << (cpu_metrics.total_time / gpu_metrics.total_time) 
-                 << "x faster than CPU." << endl;
+                 << "x faster than CPU." << std::endl;
         } else {
-            cout << "CPU completed training " << fixed << setprecision(2) 
+            std::cout << "CPU completed training " << std::fixed << std::setprecision(2) 
                  << (gpu_metrics.total_time / cpu_metrics.total_time) 
-                 << "x faster than GPU." << endl;
+                 << "x faster than GPU." << std::endl;
         }
     }
     
@@ -341,12 +402,12 @@ public:
         ofstream file(filename);
         
         if (!file.is_open()) {
-            cerr << "Error: Could not open file " << filename << " for writing." << endl;
+            cerr << "Error: Could not open file " << filename << " for writing." << std::endl;
             return;
         }
         
         // CSV Header
-        file << "Device_Type,Device_Name,Total_Time_s,Throughput_samples_per_s,Avg_FeedForward_ms,Avg_BackProp_ms,Memory_MB,Accuracy_percent,Final_Loss,Max_Compute_Units,Max_Work_Group_Size" << endl;
+        file << "Device_Type,Device_Name,Total_Time_s,Throughput_samples_per_s,Avg_FeedForward_ms,Avg_BackProp_ms,Memory_MB,Accuracy_percent,Final_Loss,Max_Compute_Units,Max_Work_Group_Size" << std::endl;
         
         // CPU Results
         file << "CPU," << cpu_metrics.device_name << "," 
@@ -358,7 +419,7 @@ public:
              << cpu_metrics.accuracy * 100 << ","
              << cpu_metrics.final_loss << ","
              << cpu_metrics.max_compute_units << ","
-             << cpu_metrics.max_work_group_size << endl;
+             << cpu_metrics.max_work_group_size << std::endl;
         
         // GPU Results
         file << "GPU," << gpu_metrics.device_name << "," 
@@ -370,30 +431,67 @@ public:
              << gpu_metrics.accuracy * 100 << ","
              << gpu_metrics.final_loss << ","
              << gpu_metrics.max_compute_units << ","
-             << gpu_metrics.max_work_group_size << endl;
+             << gpu_metrics.max_work_group_size << std::endl;
         
         file.close();
-        cout << "Results saved to " << filename << endl;
+        std::cout << "Results saved to " << filename << std::endl;
     }
     
     // Run multiple benchmark configurations for comprehensive analysis
     void runComprehensiveAnalysis() {
-        cout << "=== COMPREHENSIVE BENCHMARK ANALYSIS ===" << endl;
+        std::cout << "=== COMPREHENSIVE BENCHMARK ANALYSIS ===" << std::endl;
         
-        vector<BenchmarkConfig> configs = {
-            // Small network
-            {784, 64, 32, 10, 5, 16, 500, 0.01f, false, "small_net"},
-            // Medium network  
-            {784, 128, 64, 10, 10, 32, 1000, 0.01f, false, "medium_net"},
-            // Large network
-            {784, 256, 128, 10, 10, 64, 2000, 0.01f, false, "large_net"},
-            // Different batch sizes
-            {784, 128, 64, 10, 5, 8, 1000, 0.01f, false, "batch_8"},
-            {784, 128, 64, 10, 5, 128, 1000, 0.01f, false, "batch_128"}
-        };
+        vector<BenchmarkConfig> configs = {};
+        
+        // Small network - Full dataset
+        BenchmarkConfig small_config;
+        small_config.input_size = 784; small_config.hidden1_size = 64; small_config.hidden2_size = 32;
+        small_config.output_size = 10; small_config.num_epochs = 5; small_config.batch_size = 16;
+        small_config.num_samples = 60000; small_config.learning_rate = 0.01f; small_config.verbose = false;
+        small_config.dataset_name = "MNIST_small_net"; small_config.use_fashion_mnist = false; small_config.random_seed = 42;
+        configs.push_back(small_config);
+        
+        // Medium network - Full dataset
+        BenchmarkConfig medium_config;
+        medium_config.input_size = 784; medium_config.hidden1_size = 128; medium_config.hidden2_size = 64;
+        medium_config.output_size = 10; medium_config.num_epochs = 10; medium_config.batch_size = 32;
+        medium_config.num_samples = 60000; medium_config.learning_rate = 0.01f; medium_config.verbose = false;
+        medium_config.dataset_name = "MNIST_medium_net"; medium_config.use_fashion_mnist = false; medium_config.random_seed = 42;
+        configs.push_back(medium_config);
+        
+        // Large network - Full dataset
+        BenchmarkConfig large_config;
+        large_config.input_size = 784; large_config.hidden1_size = 256; large_config.hidden2_size = 128;
+        large_config.output_size = 10; large_config.num_epochs = 10; large_config.batch_size = 64;
+        large_config.num_samples = 60000; large_config.learning_rate = 0.01f; large_config.verbose = false;
+        large_config.dataset_name = "MNIST_large_net"; large_config.use_fashion_mnist = false; large_config.random_seed = 42;
+        configs.push_back(large_config);
+        
+        // Different batch sizes - Full dataset
+        BenchmarkConfig batch8_config;
+        batch8_config.input_size = 784; batch8_config.hidden1_size = 128; batch8_config.hidden2_size = 64;
+        batch8_config.output_size = 10; batch8_config.num_epochs = 5; batch8_config.batch_size = 8;
+        batch8_config.num_samples = 60000; batch8_config.learning_rate = 0.01f; batch8_config.verbose = false;
+        batch8_config.dataset_name = "MNIST_batch_8"; batch8_config.use_fashion_mnist = false; batch8_config.random_seed = 42;
+        configs.push_back(batch8_config);
+        
+        BenchmarkConfig batch128_config;
+        batch128_config.input_size = 784; batch128_config.hidden1_size = 128; batch128_config.hidden2_size = 64;
+        batch128_config.output_size = 10; batch128_config.num_epochs = 5; batch128_config.batch_size = 128;
+        batch128_config.num_samples = 60000; batch128_config.learning_rate = 0.01f; batch128_config.verbose = false;
+        batch128_config.dataset_name = "MNIST_batch_128"; batch128_config.use_fashion_mnist = false; batch128_config.random_seed = 42;
+        configs.push_back(batch128_config);
+        
+        // Fashion-MNIST comparison - Full dataset
+        BenchmarkConfig fashion_config;
+        fashion_config.input_size = 784; fashion_config.hidden1_size = 128; fashion_config.hidden2_size = 64;
+        fashion_config.output_size = 10; fashion_config.num_epochs = 10; fashion_config.batch_size = 32;
+        fashion_config.num_samples = 60000; fashion_config.learning_rate = 0.01f; fashion_config.verbose = false;
+        fashion_config.dataset_name = "Fashion_MNIST_comparison"; fashion_config.use_fashion_mnist = true; fashion_config.random_seed = 42;
+        configs.push_back(fashion_config);
         
         for (const auto& cfg : configs) {
-            cout << "\n--- Testing Configuration: " << cfg.dataset_name << " ---" << endl;
+            std::cout << "\n--- Testing Configuration: " << cfg.dataset_name << " ---" << std::endl;
             setConfig(cfg);
             auto [cpu_metrics, gpu_metrics] = runComparison();
             printComparison(cpu_metrics, gpu_metrics);

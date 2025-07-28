@@ -17,18 +17,18 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="1DMatrixLib.h" />
+    <ClInclude Include="BenchmarkComparison.h" />
     <ClInclude Include="ImageNew.h" />
     <ClInclude Include="MatrixLib.h" />
-    <ClInclude Include="MatrixLib_old.h" />
     <ClInclude Include="NeuralNetwork.h" />
-    <ClInclude Include="NeuralNetwork1DMat.h" />
     <ClInclude Include="NeuralNetworkNew.h" />
-    <ClInclude Include="SYCLBackends.h" />
+    <ClInclude Include="NeuralNetworkNew_CPU.h" />
     <ClInclude Include="SYCLMatrixLib.h" />
+    <ClInclude Include="SYCLMatrixLib_CPU.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="example_cpu_gpu_comparison.cpp" />
     <ClCompile Include="ImageNew.cpp" />
-    <ClCompile Include="MNIST_experiment.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="LICENSE.txt" />

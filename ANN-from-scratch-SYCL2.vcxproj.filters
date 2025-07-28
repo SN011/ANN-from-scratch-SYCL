@@ -29,13 +29,7 @@
     <ClInclude Include="MatrixLib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="MatrixLib_old.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="NeuralNetwork.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="NeuralNetwork1DMat.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="NeuralNetworkNew.h">
@@ -44,7 +38,13 @@
     <ClInclude Include="SYCLMatrixLib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="SYCLBackends.h">
+    <ClInclude Include="BenchmarkComparison.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="NeuralNetworkNew_CPU.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SYCLMatrixLib_CPU.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -52,7 +52,7 @@
     <ClCompile Include="ImageNew.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="MNIST_experiment.cpp">
+    <ClCompile Include="example_cpu_gpu_comparison.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

@@ -3,7 +3,6 @@
 #include <vector>
 #include "ImageNew.h"
 #include "NeuralNetworkNew.h"
-#include "NeuralNetwork1DMat.h"
 #include <random>
 #include <algorithm>
 #include <omp.h>
@@ -170,7 +169,6 @@ void loadCIFAR10Data() {
 int globalOutputNodesCount = 10;  // CIFAR-10 has 10 output classes
 // Use CNN instead of fully connected network
 NeuralNetwork nn(784,512,256,globalOutputNodesCount);
-NeuralNetwork1DMat cpunn(784, 512, 256, globalOutputNodesCount);
 
 void loadMNISTData() {
     // Load MNIST training data
@@ -293,7 +291,6 @@ void batchTrain(int batchSize, int numEpochs) {
             }
 
             // Train on the current batch and get outputs
-            cpunn.BackPropagateBatchAndReturnOutputs(batchInputs, batchOutputs);
             nn.BackPropagateBatchAndReturnOutputs(batchInputs, batchOutputs);
 
         }
@@ -302,26 +299,25 @@ void batchTrain(int batchSize, int numEpochs) {
         std::cout << "Epoch " << epoch + 1 << " took " << omp_get_wtime() - start << " seconds\n";
     }
 }
-
-int main() {
-    nn.setLearningRate(0.15f);
-    cpunn.setLearningRate(0.15f);
-    std::srand(std::time(0));
-
-    double start = omp_get_wtime();
-    loadMNISTData();
-    std::cout << "Loading MNIST data took " << omp_get_wtime() - start << " seconds\n";
-    std::cout << "Training set size: " << trainingSet.size() << "\nTesting Set Size: " << testingSet.size() << "\n";
-
-    nn.printDeviceInfo(); // Print SYCL device information
-
-    // Train using batch processing
-    int batchSize = 256;  // Reduced batch size for CNN
-    int numEpochs = 30;  // More epochs for CNN
-    std::cout << "Training ANN with batch size: " << batchSize << ", for " << numEpochs << " epochs.\n";
-    batchTrain(batchSize, numEpochs);
-
-    test(); // Evaluate the model after training
-    return 0;
-}
+//
+//int main() {
+//    nn.setLearningRate(0.15f);
+//    std::srand(std::time(0));
+//
+//    double start = omp_get_wtime();
+//    loadMNISTData();
+//    std::cout << "Loading MNIST data took " << omp_get_wtime() - start << " seconds\n";
+//    std::cout << "Training set size: " << trainingSet.size() << "\nTesting Set Size: " << testingSet.size() << "\n";
+//
+//    nn.printDeviceInfo(); // Print SYCL device information
+//
+//    // Train using batch processing
+//    int batchSize = 256;  // Reduced batch size for CNN
+//    int numEpochs = 30;  // More epochs for CNN
+//    std::cout << "Training ANN with batch size: " << batchSize << ", for " << numEpochs << " epochs.\n";
+//    batchTrain(batchSize, numEpochs);
+//
+//    test(); // Evaluate the model after training
+//    return 0;
+//}
 

@@ -5,6 +5,7 @@
 #include <cassert>
 #include <functional>
 #include <random>
+#include <map>
 #include <sycl/sycl.hpp>
 #include <oneapi/mkl/blas.hpp> // For oneMKL's GEMM function
 #include <limits> // Required for std::numeric_limits
@@ -14,15 +15,98 @@ using namespace sycl;
 
 class Matrix {
 public:
+    enum class ElementWiseOp {
+        ADD_CONST,
+        MUL_CONST,
+        NEGATE
+    };
+
     int rows;
     int cols;
     float* data; // Changed from vector<float> to float*
     sycl::queue* q_ptr; // Pointer to the SYCL queue
 
+private:
+    // Static ones vector for GEMV operations - indexed by size
+    static std::map<std::pair<sycl::queue*, int>, float*> ones_cache;
+    
+    // USM Memory pool - keyed by (queue, rows, cols) and stores vector of free pointers
+    static std::map<std::tuple<sycl::queue*, int, int>, std::vector<float*>> memory_pool;
+
+    // Helper function to get or create ones vector
+    float* getOnesVector(int size) {
+        auto key = std::make_pair(q_ptr, size);
+        auto it = ones_cache.find(key);
+        if (it != ones_cache.end()) {
+            return it->second;
+        }
+        
+        // Create new ones vector
+        float* ones = sycl::malloc_device<float>(size, *q_ptr);
+        if (!ones) {
+            throw std::runtime_error("Failed to allocate USM for ones vector.");
+        }
+        
+        // Initialize to all ones
+        q_ptr->submit([&](handler& h) {
+            h.parallel_for(range<1>(size), [=](id<1> i) {
+                ones[i] = 1.0f;
+            });
+        }).wait();
+        
+        ones_cache[key] = ones;
+        return ones;
+    }
+    
+    // Helper functions for memory pool management
+    float* getPooledMemory(int rows, int cols) {
+        auto key = std::make_tuple(q_ptr, rows, cols);
+        auto it = memory_pool.find(key);
+        
+        if (it != memory_pool.end() && !it->second.empty()) {
+            float* ptr = it->second.back();
+            it->second.pop_back();
+            return ptr;
+        }
+        
+        // No available memory in pool, allocate new
+        float* ptr = sycl::malloc_device<float>(rows * cols, *q_ptr);
+        return ptr;
+    }
+    
+    void returnPooledMemory(float* ptr, int rows, int cols) {
+        if (!ptr) return;
+        
+        auto key = std::make_tuple(q_ptr, rows, cols);
+        memory_pool[key].push_back(ptr);
+    }
+
+public:
     Matrix() : rows(0), cols(0), data(nullptr), q_ptr(nullptr) {}
 
+private:
+    // Fused element-wise operation kernel
+    template<ElementWiseOp OP>
+    void fused_elementwise(float value = 0.0f) {
+        int r = rows;
+        int c = cols;
+        q_ptr->submit([&](handler& h) {
+            auto ptr = data;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                if constexpr (OP == ElementWiseOp::ADD_CONST) {
+                    ptr[i] += value;
+                } else if constexpr (OP == ElementWiseOp::MUL_CONST) {
+                    ptr[i] *= value;
+                } else if constexpr (OP == ElementWiseOp::NEGATE) {
+                    ptr[i] *= -1.0f;
+                }
+            });
+        });
+    }
+
+public:
     Matrix(int r, int c, sycl::queue& q) : rows(r), cols(c), q_ptr(&q) {
-        data = sycl::malloc_device<float>(rows * cols, q);
+        data = getPooledMemory(rows, cols);
         if (!data) {
             throw std::runtime_error("Failed to allocate USM for Matrix data.");
         }
@@ -31,7 +115,7 @@ public:
     // Copy constructor for Matrix (deep copy for USM)
     Matrix(const Matrix& other) : rows(other.rows), cols(other.cols), q_ptr(other.q_ptr) {
         if (q_ptr) {
-            data = sycl::malloc_device<float>(rows * cols, *q_ptr);
+            data = const_cast<Matrix*>(&other)->getPooledMemory(rows, cols);
             if (!data) {
                 throw std::runtime_error("Failed to allocate USM for Matrix data in copy constructor.");
             }
@@ -54,13 +138,13 @@ public:
     Matrix& operator=(const Matrix& other) {
         if (this != &other) {
             if (data && q_ptr) {
-                sycl::free(data, *q_ptr);
+                returnPooledMemory(data, rows, cols);
             }
             rows = other.rows;
             cols = other.cols;
             q_ptr = other.q_ptr;
             if (q_ptr) {
-                data = sycl::malloc_device<float>(rows * cols, *q_ptr);
+                data = getPooledMemory(rows, cols);
                 if (!data) {
                     throw std::runtime_error("Failed to allocate USM for Matrix data in copy assignment.");
                 }
@@ -77,7 +161,7 @@ public:
     Matrix& operator=(Matrix&& other) noexcept {
         if (this != &other) {
             if (data && q_ptr) {
-                sycl::free(data, *q_ptr);
+                returnPooledMemory(data, rows, cols);
             }
             rows = other.rows;
             cols = other.cols;
@@ -94,14 +178,13 @@ public:
 
     ~Matrix() {
         if (data && q_ptr) {
-            sycl::free(data, *q_ptr);
+            returnPooledMemory(data, rows, cols);
             data = nullptr;
             q_ptr = nullptr;
         }
     }
 
-    void RandInit(int fan_in = 0, int fan_out = 0) {
-        std::random_device rd;
+    void RandInit(int fan_in = 0, int fan_out = 0, unsigned int seed = 0) {
         float limit;
         if (fan_in > 0 && fan_out > 0) {
             limit = std::sqrt(6.0f / (fan_in + fan_out));
@@ -109,12 +192,38 @@ public:
         else {
             limit = 1.0f; // Default range if no fan_in/fan_out is provided
         }
-        std::uniform_real_distribution<float> dist(-limit, limit);
-        std::vector<float> host_data(rows * cols);
-        for (int i = 0; i < rows * cols; i++) {
-            host_data[i] = dist(rd);
+        
+        // Use shared USM for temporary storage
+        float* temp_data = sycl::malloc_shared<float>(rows * cols, *q_ptr);
+        if (!temp_data) {
+            throw std::runtime_error("Failed to allocate shared USM for RandInit.");
         }
-        q_ptr->memcpy(data, host_data.data(), rows * cols * sizeof(float)).wait();
+        
+        unsigned int base_seed = (seed == 0) ? std::random_device{}() : seed;
+        int total_elements = rows * cols;
+        
+        q_ptr->submit([&](handler& h) {
+            h.parallel_for(range<1>(total_elements), [=](id<1> i) {
+                // XOR-SHIFT random number generator
+                unsigned int local_seed = base_seed + i[0] + 1; // Ensure non-zero seed
+                
+                // XOR-SHIFT algorithm
+                local_seed ^= local_seed << 13;
+                local_seed ^= local_seed >> 17;
+                local_seed ^= local_seed << 5;
+                
+                // Convert to float in range [0, 1)
+                float rand_01 = (local_seed & 0x7FFFFFFF) / float(0x7FFFFFFF);
+                
+                // Scale to desired range [-limit, limit]
+                temp_data[i] = (rand_01 * 2.0f - 1.0f) * limit;
+            });
+        }).wait();
+        
+        // Copy from shared USM to device USM
+        q_ptr->memcpy(data, temp_data, rows * cols * sizeof(float)).wait();
+        
+        sycl::free(temp_data, *q_ptr);
     }
 
     void printMatrix() const {
@@ -129,44 +238,15 @@ public:
     }
 
     void multiplyScalar(float n) {
-        int r = rows;
-        int c = cols;
-        // float* ptr = data.data(); 
-
-        // buffer<float, 1> buf(ptr, range<1>(r * c)); 
-        q_ptr->submit([&](handler& h) {
-            auto ptr = data;
-            h.parallel_for(range<1>(r * c), [=](id<1> i) {
-                ptr[i] *= n;
-                });
-            });
+        fused_elementwise<ElementWiseOp::MUL_CONST>(n);
     }
 
     void addScalar(float n) {
-        int r = rows;
-        int c = cols;
-        // float* ptr = data.data(); 
-
-        // buffer<float, 1> buf(ptr, range<1>(r * c)); 
-        q_ptr->submit([&](handler& h) {
-            auto ptr = data;
-            h.parallel_for(range<1>(r * c), [=](id<1> i) {
-                ptr[i] += n;
-                });
-            });
+        fused_elementwise<ElementWiseOp::ADD_CONST>(n);
     }
 
     void negate() {
-        int r = rows;
-        int c = cols;
-
-
-        q_ptr->submit([&](handler& h) {
-            auto ptr = data;
-            h.parallel_for(range<1>(r * c), [=](id<1> i) {
-                ptr[i] *= -1;
-                });
-            });
+        fused_elementwise<ElementWiseOp::NEGATE>();
     }
 
     Matrix Negate() {
@@ -224,16 +304,15 @@ public:
         }
     }
 
-    static Matrix add(const Matrix& m1, const Matrix& m2, sycl::queue& q) {
+    static Matrix add(const Matrix& m1, const Matrix& m2, sycl::queue& q, bool in_place = false) {
         if (m1.rows == m2.rows && m1.cols == m2.cols) {
-            Matrix result(m1.rows, m1.cols, q); // Pass queue to new Matrix constructor
+            Matrix result = in_place ? Matrix() : Matrix(m1.rows, m1.cols, q);
             int r = m1.rows;
             int c = m1.cols;
 
             const float* aPtr = m1.data;
             const float* bPtr = m2.data;
-            float* resPtr = result.data;
-
+            float* resPtr = in_place ? const_cast<float*>(m1.data) : result.data;
 
             q.submit([&](handler& h) {
                 auto a = aPtr;
@@ -243,20 +322,26 @@ public:
                     out[i] = a[i] + b[i];
                     });
                 });
+            
+            if (in_place) {
+                // Return a copy of m1 for consistency with API
+                result = Matrix(m1.rows, m1.cols, q);
+                q.memcpy(result.data, m1.data, r * c * sizeof(float));
+            }
             return result;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
-    Matrix Add(const Matrix& other) {
+    Matrix Add(const Matrix& other, bool in_place = false) {
         if (rows == other.rows && cols == other.cols) {
-            Matrix output(rows, cols, *q_ptr); // Pass queue to new Matrix constructor
+            Matrix output = in_place ? Matrix() : Matrix(rows, cols, *q_ptr);
             int r = rows;
             int c = cols;
 
             const float* aPtr = data;
             const float* bPtr = other.data;
-            float* outPtr = output.data;
+            float* outPtr = in_place ? data : output.data;
 
             q_ptr->submit([&](handler& h) {
                 auto accA = aPtr;
@@ -266,24 +351,26 @@ public:
                     accC[i] = accA[i] + accB[i];
                     });
                 });
+            
+            if (in_place) {
+                // Return a copy of this for consistency with API
+                output = Matrix(rows, cols, *q_ptr);
+                q_ptr->memcpy(output.data, data, r * c * sizeof(float));
+            }
             return output;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
-    static Matrix subtract(const Matrix& m1, const Matrix& m2, sycl::queue& q) {
+    static Matrix subtract(const Matrix& m1, const Matrix& m2, sycl::queue& q, bool in_place = false) {
         if (m1.rows == m2.rows && m1.cols == m2.cols) {
-            Matrix result(m1.rows, m1.cols, q); // Pass queue to new Matrix constructor
+            Matrix result = in_place ? Matrix() : Matrix(m1.rows, m1.cols, q);
             int r = m1.rows;
             int c = m1.cols;
 
             const float* aPtr = m1.data;
             const float* bPtr = m2.data;
-            float* resPtr = result.data;
-
-            // buffer<float, 1> buf_a(aPtr, range<1>(r * c)); 
-            // buffer<float, 1> buf_b(bPtr, range<1>(r * c)); 
-            // buffer<float, 1> buf_c(resPtr, range<1>(r * c)); 
+            float* resPtr = in_place ? const_cast<float*>(m1.data) : result.data;
 
             q.submit([&](handler& h) {
                 auto a = aPtr;
@@ -293,6 +380,12 @@ public:
                     out[i] = a[i] - b[i];
                     });
                 });
+            
+            if (in_place) {
+                // Return a copy of m1 for consistency with API
+                result = Matrix(m1.rows, m1.cols, q);
+                q.memcpy(result.data, m1.data, r * c * sizeof(float));
+            }
             return result;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
@@ -338,7 +431,8 @@ public:
         // Rows and cols already match output, so no change needed
     }
 
-    static Matrix multiply(const Matrix& m1, const Matrix& m2, sycl::queue& q) {
+    static Matrix multiply(const Matrix& m1, const Matrix& m2, sycl::queue& q, 
+                          const std::vector<sycl::event>& deps = {}) {
         if (m1.cols != m2.rows) {
             throw std::invalid_argument("Matrix dimensions do not match for multiplication.");
         }
@@ -361,11 +455,54 @@ public:
                 m2.cols,
                 0.0f,
                 result.data, // USM pointer
-                result.cols
+                result.cols,
+                deps  // Event dependencies
             );
         }
         catch (sycl::exception const& e) {
             std::cerr << "SYCL exception caught during static GEMM: " << e.what() << std::endl;
+        }
+
+        return result;
+    }
+
+    // New multiply function with transpose flags to avoid explicit transpose operations
+    static Matrix multiply_with_transpose(const Matrix& m1, const Matrix& m2, sycl::queue& q,
+                                          bool transpose_m1 = false, bool transpose_m2 = false,
+                                          const std::vector<sycl::event>& deps = {}) {
+        int m1_effective_rows = transpose_m1 ? m1.cols : m1.rows;
+        int m1_effective_cols = transpose_m1 ? m1.rows : m1.cols;
+        int m2_effective_rows = transpose_m2 ? m2.cols : m2.rows;
+        int m2_effective_cols = transpose_m2 ? m2.rows : m2.cols;
+        
+        if (m1_effective_cols != m2_effective_rows) {
+            throw std::invalid_argument("Matrix dimensions do not match for multiplication after transpose.");
+        }
+
+        Matrix result(m1_effective_rows, m2_effective_cols, q);
+
+        // Using oneMKL's gemm function with transpose flags
+        try {
+            oneapi::mkl::blas::row_major::gemm(
+                q,
+                transpose_m1 ? oneapi::mkl::transpose::trans : oneapi::mkl::transpose::nontrans,
+                transpose_m2 ? oneapi::mkl::transpose::trans : oneapi::mkl::transpose::nontrans,
+                m1_effective_rows,
+                m2_effective_cols,
+                m1_effective_cols,
+                1.0f,
+                m1.data, // USM pointer
+                m1.cols, // Leading dimension of original matrix
+                m2.data, // USM pointer
+                m2.cols, // Leading dimension of original matrix
+                0.0f,
+                result.data, // USM pointer
+                result.cols,
+                deps  // Event dependencies
+            );
+        }
+        catch (sycl::exception const& e) {
+            std::cerr << "SYCL exception caught during transpose GEMM: " << e.what() << std::endl;
         }
 
         return result;
@@ -394,16 +531,15 @@ public:
         }
     }
 
-    Matrix ElementWiseMult(const Matrix& other) {
+    Matrix ElementWiseMult(const Matrix& other, bool in_place = false) {
         if (rows == other.rows && cols == other.cols) {
-            Matrix output(rows, cols, *q_ptr); // Pass queue to new Matrix constructor
+            Matrix output = in_place ? Matrix() : Matrix(rows, cols, *q_ptr);
             int r = rows;
             int c = cols;
 
             const float* ptrA = data;
             const float* ptrB = other.data;
-            float* ptrC = output.data;
-
+            float* ptrC = in_place ? data : output.data;
 
             q_ptr->submit([&](handler& h) {
                 auto a = ptrA;
@@ -414,21 +550,25 @@ public:
                     });
                 });
 
+            if (in_place) {
+                // Return a copy of this for consistency with API
+                output = Matrix(rows, cols, *q_ptr);
+                q_ptr->memcpy(output.data, data, r * c * sizeof(float));
+            }
             return output;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
-    static Matrix ElementWiseMult(const Matrix& m1, const Matrix& m2, sycl::queue& q) {
+    static Matrix ElementWiseMult(const Matrix& m1, const Matrix& m2, sycl::queue& q, bool in_place = false) {
         if (m1.rows == m2.rows && m1.cols == m2.cols) {
-            Matrix output(m1.rows, m1.cols, q); // Pass queue to new Matrix constructor
+            Matrix output = in_place ? Matrix() : Matrix(m1.rows, m1.cols, q);
             int r = m1.rows;
             int c = m1.cols;
 
             const float* ptrA = m1.data;
             const float* ptrB = m2.data;
-            float* ptrC = output.data;
-
+            float* ptrC = in_place ? const_cast<float*>(m1.data) : output.data;
 
             q.submit([&](handler& h) {
                 auto a = ptrA;
@@ -438,56 +578,25 @@ public:
                     cacc[i] = a[i] * b[i];
                     });
                 });
+            
+            if (in_place) {
+                // Return a copy of m1 for consistency with API
+                output = Matrix(m1.rows, m1.cols, q);
+                q.memcpy(output.data, m1.data, r * c * sizeof(float));
+            }
             return output;
         }
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
-    // Transpose operations are inherently host-side and involve data movement.
-    // For efficiency with USM, one might prefer to re-think operations that require transpose
-    // or use oneMKL functions with transpose flags if available. 
-    void transpose() {
-        std::vector<float> host_data(rows * cols);
-        q_ptr->memcpy(host_data.data(), data, rows * cols * sizeof(float)).wait();
+    // DELETED: transpose() function to avoid expensive host-device copies
+    // Use oneMKL GEMM with transpose flags instead: oneapi::mkl::transpose::trans
 
-        // Free old device memory if this object already held data
-        // This needs careful management if 'this' matrix is being reused/reassigned.
-        // For now, assuming it's safe to free and reallocate, or that the swap handles it.
-        sycl::free(data, *q_ptr);
-
-        int originalRows = rows;
-        rows = cols;
-        cols = originalRows;
-
-        data = sycl::malloc_device<float>(rows * cols, *q_ptr);
-        if (!data) {
-            throw std::runtime_error("Failed to allocate USM for transposed Matrix data.");
-        }
-
-        std::vector<float> output_host_data(rows * cols);
-        for (int i = 0; i < originalRows; i++) {
-            for (int j = 0; j < cols; j++) { // Loop over new cols (original rows)
-                output_host_data[j * originalRows + i] = host_data[i * cols + j];
-            }
-        }
-        q_ptr->memcpy(data, output_host_data.data(), rows * cols * sizeof(float)).wait();
-    }
-
+    // DELETED: Transpose() function to avoid expensive host-device copies
+    // Use oneMKL GEMM with transpose flags instead: oneapi::mkl::transpose::trans
     Matrix Transpose() const {
-        Matrix output(cols, rows, *q_ptr); // Pass queue to new Matrix constructor
-
-        std::vector<float> host_data(rows * cols);
-        q_ptr->memcpy(host_data.data(), data, rows * cols * sizeof(float)).wait();
-
-        std::vector<float> output_host_data(cols * rows);
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < cols; j++) {
-                output_host_data[j * rows + i] = host_data[i * cols + j];
-            }
-        }
-        q_ptr->memcpy(output.data, output_host_data.data(), cols * rows * sizeof(float)).wait();
-
-        return output;
+        // This function should not be used - use GEMM with transpose flags instead
+        throw std::runtime_error("Transpose() function has been deleted for performance. Use GEMM with transpose flags.");
     }
 
     static float Sigmoid(float x) {
@@ -637,22 +746,30 @@ public:
     Matrix sumAlongAxis(int axis) const {
         if (axis == 1) {
             Matrix result(rows, 1, *q_ptr);
-            // Pass queue to new Matrix constructor
-            // For sumAlongAxis, it's simpler to copy to host, compute, and copy back to USM
-            // For larger matrices, a SYCL kernel for reduction would be more efficient
-            std::vector<float> host_data(rows * cols);
-            q_ptr->memcpy(host_data.data(), data, rows * cols * sizeof(float)).wait();
-
-            std::vector<float> result_host_data(rows);
-            for (int i = 0; i < rows; i++) {
-                float sum = 0.0f;
-                for (int j = 0; j < cols; j++) {
-                    sum += host_data[i * cols + j];
-                }
-                result_host_data[i] = sum;
+            float* ones = const_cast<Matrix*>(this)->getOnesVector(cols);
+            
+            // Use GEMV: result = A * ones_vector (where A is this matrix)
+            // result = 1.0 * data * ones + 0.0 * result
+            try {
+                oneapi::mkl::blas::row_major::gemv(
+                    *q_ptr,
+                    oneapi::mkl::transpose::nontrans,  // trans = nontrans
+                    rows,           // m (rows of A)
+                    cols,           // n (cols of A)
+                    1.0f,           // alpha
+                    data,           // A data (USM pointer)
+                    cols,           // lda (leading dimension of A)
+                    ones,           // x vector (ones vector)
+                    1,              // incx (increment for x)
+                    0.0f,           // beta
+                    result.data,    // y vector (result)
+                    1               // incy (increment for y)
+                );
             }
-            q_ptr->memcpy(result.data, result_host_data.data(), rows * sizeof(float)).wait();
-
+            catch (sycl::exception const& e) {
+                std::cerr << "SYCL exception caught during GEMV: " << e.what() << std::endl;
+            }
+            
             return result;
         }
         else {
@@ -678,25 +795,50 @@ public:
         const float* A = m.data;
         float* B = out.data;
 
-        // one work‑group per column
+        // Use work-groups with local memory for efficient row reduction
+        const int local_size = 256; // Workgroup size
+        
         q.submit([&](sycl::handler& h) {
-            h.parallel_for(sycl::range<2>(C, R), [=](sycl::id<2> id) {
-                int col = id[0], row = id[1];
-
-                // 1. find per‑column max (naïve reduction in registers)
-                float maxv = -1e30f;
-                for (int r_idx = 0; r_idx < R; ++r_idx)
-                    maxv = sycl::max(maxv, A[r_idx * C + col]);
-
-                // 2. compute exp and running sum
-                float sum = 0.0f;
-                for (int r_idx = 0; r_idx < R; ++r_idx)
-                    sum += sycl::exp(A[r_idx * C + col] - maxv);
-
-                // 3. write normalized value
-                B[row * C + col] = sycl::exp(A[row * C + col] - maxv) / sum;
-                });
+            // Local memory for reduction operations
+            sycl::accessor<float, 1, sycl::access::mode::read_write, sycl::access::target::local> 
+                local_max(sycl::range<1>(local_size), h);
+            sycl::accessor<float, 1, sycl::access::mode::read_write, sycl::access::target::local> 
+                local_sum(sycl::range<1>(local_size), h);
+            
+            h.parallel_for(sycl::nd_range<1>(sycl::range<1>((C + local_size - 1) / local_size * local_size), 
+                                           sycl::range<1>(local_size)),
+                          [=](sycl::nd_item<1> item) {
+                int gid = item.get_global_id(0);
+                int lid = item.get_local_id(0);
+                int group_id = item.get_group(0);
+                
+                if (gid >= C) return; // Check bounds
+                
+                // Phase 1: Find max for this column
+                float max_val = -std::numeric_limits<float>::infinity();
+                for (int r = 0; r < R; r++) {
+                    max_val = sycl::max(max_val, A[r * C + gid]);
+                }
+                local_max[lid] = max_val;
+                item.barrier(sycl::access::fence_space::local_space);
+                
+                // Reduce max within workgroup (though each thread handles one column)
+                // This step is mainly for future extensibility
+                
+                // Phase 2: Compute sum of exp(x - max)
+                float sum_exp = 0.0f;
+                for (int r = 0; r < R; r++) {
+                    sum_exp += sycl::exp(A[r * C + gid] - max_val);
+                }
+                local_sum[lid] = sum_exp;
+                item.barrier(sycl::access::fence_space::local_space);
+                
+                // Phase 3: Write normalized values
+                for (int r = 0; r < R; r++) {
+                    B[r * C + gid] = sycl::exp(A[r * C + gid] - max_val) / sum_exp;
+                }
             });
+        });
         return out;
     }
 
@@ -728,6 +870,10 @@ public:
         return loss / outputs.cols; // Average over the batch size (number of columns)
     }
 };
+
+// Static member definitions
+std::map<std::pair<sycl::queue*, int>, float*> Matrix::ones_cache;
+std::map<std::tuple<sycl::queue*, int, int>, std::vector<float*>> Matrix::memory_pool;
 
 // template <>
 // struct is_device_copyable<Matrix> : std::true_type {}; 

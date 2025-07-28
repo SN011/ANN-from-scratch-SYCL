@@ -66,9 +66,8 @@ public:
 
     ~Matrix_CPU() = default; // No need for explicit cleanup with std::vector
 
-    void RandInit(int fan_in = 0, int fan_out = 0) {
-        std::random_device rd;
-        std::mt19937 gen(rd());
+    void RandInit(int fan_in = 0, int fan_out = 0, unsigned int seed = 0) {
+        std::mt19937 gen(seed == 0 ? std::random_device{}() : seed);
         float limit;
         if (fan_in > 0 && fan_out > 0) {
             limit = std::sqrt(6.0f / (fan_in + fan_out));
@@ -154,7 +153,7 @@ public:
             
             q_ptr->submit([&](sycl::handler& h) {
                 auto in_acc = in_buf.get_access<sycl::access::mode::read>(h);
-                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h);
                 
                 auto local_range = std::min(64, total_size);
                 auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -211,12 +210,13 @@ public:
                     
                     auto local_range = std::min(64, total_size);
                     auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
+                    int local_cols = cols;  // Capture member variable by value
                     
                     h.parallel_for(sycl::nd_range<1>(global_range, local_range), 
                         [=](sycl::nd_item<1> item) {
                             auto gid = item.get_global_id(0);
                             if (gid < total_size) {
-                                int row = gid / cols;
+                                int row = gid / local_cols;
                                 this_acc[gid] += bias_acc[row];
                             }
                         });
@@ -241,7 +241,7 @@ public:
                 q.submit([&](sycl::handler& h) {
                     auto m1_acc = m1_buf.get_access<sycl::access::mode::read>(h);
                     auto m2_acc = m2_buf.get_access<sycl::access::mode::read>(h);
-                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h);
                     
                     auto local_range = std::min(64, total_size);
                     auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -278,7 +278,7 @@ public:
                 q.submit([&](sycl::handler& h) {
                     auto m1_acc = m1_buf.get_access<sycl::access::mode::read>(h);
                     auto m2_acc = m2_buf.get_access<sycl::access::mode::read>(h);
-                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h);
                     
                     auto local_range = std::min(64, total_size);
                     auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -423,7 +423,7 @@ public:
                 q_ptr->submit([&](sycl::handler& h) {
                     auto this_acc = this_buf.get_access<sycl::access::mode::read>(h);
                     auto other_acc = other_buf.get_access<sycl::access::mode::read>(h);
-                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h);
                     
                     auto local_range = std::min(64, total_size);
                     auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -456,7 +456,7 @@ public:
                 q.submit([&](sycl::handler& h) {
                     auto m1_acc = m1_buf.get_access<sycl::access::mode::read>(h);
                     auto m2_acc = m2_buf.get_access<sycl::access::mode::read>(h);
-                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                    auto result_acc = result_buf.get_access<sycl::access::mode::write>(h);
                     
                     auto local_range = std::min(64, total_size);
                     auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -593,7 +593,7 @@ public:
             
             q.submit([&](sycl::handler& h) {
                 auto in_acc = in_buf.get_access<sycl::access::mode::read>(h);
-                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h);
                 
                 auto local_range = std::min(64, total_size);
                 auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -621,7 +621,7 @@ public:
             
             q.submit([&](sycl::handler& h) {
                 auto in_acc = in_buf.get_access<sycl::access::mode::read>(h);
-                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h);
                 
                 auto local_range = std::min(64, total_size);
                 auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -695,7 +695,7 @@ public:
             
             q.submit([&](sycl::handler& h) {
                 auto in_acc = in_buf.get_access<sycl::access::mode::read>(h);
-                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h);
                 
                 auto local_range = std::min(64, total_size);
                 auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -723,7 +723,7 @@ public:
             
             q.submit([&](sycl::handler& h) {
                 auto in_acc = in_buf.get_access<sycl::access::mode::read>(h);
-                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                auto out_acc = out_buf.get_access<sycl::access::mode::write>(h);
                 
                 auto local_range = std::min(64, total_size);
                 auto global_range = ((total_size + local_range - 1) / local_range) * local_range;
@@ -763,12 +763,13 @@ public:
                     
                     q_ptr->submit([&](sycl::handler& h) {
                         auto in_acc = in_buf.get_access<sycl::access::mode::read>(h);
-                        auto out_acc = out_buf.get_access<sycl::access::mode::write>(h, sycl::no_init);
+                        auto out_acc = out_buf.get_access<sycl::access::mode::write>(h);
                         
+                        int local_cols = cols;  // Capture member variable by value
                         h.parallel_for(sycl::range<1>(rows), [=](sycl::id<1> row_id) {
                             float sum = 0.0f;
-                            for (int j = 0; j < cols; j++) {
-                                sum += in_acc[row_id * cols + j];
+                            for (int j = 0; j < local_cols; j++) {
+                                sum += in_acc[row_id * local_cols + j];
                             }
                             out_acc[row_id] = sum;
                         });

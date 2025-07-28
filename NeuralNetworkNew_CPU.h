@@ -42,7 +42,7 @@ private:
 
 public:
 
-    NeuralNetwork_CPU(int in, int hid1, int hid2, int out) {
+    NeuralNetwork_CPU(int in, int hid1, int hid2, int out, unsigned int seed = 42) {
         initializeQueue();
         
         //Add the params to the topology array list --> list will be [in, hid1, hid2, out]
@@ -54,8 +54,8 @@ public:
         // Initialize weight and bias matrices with CPU-optimized approach
         for (size_t i = 0; i < nn_topology.size() - 1; i++) {
             Matrix_CPU wts(nn_topology[i + 1], nn_topology[i], q);
-            // Xavier initialization
-            wts.RandInit(nn_topology[i], nn_topology[i + 1]);
+            // Xavier initialization with fixed seed for reproducibility
+            wts.RandInit(nn_topology[i], nn_topology[i + 1], seed + i);
             weightMatrices.push_back(std::move(wts));
 
             Matrix_CPU b(nn_topology[i + 1], 1, q);
