@@ -11,6 +11,9 @@
 #include <map>
 #include <random>
 #include <algorithm>
+#include <sstream>
+#include <cstdint>
+#include <cstring>
 
 using namespace std;
 
@@ -21,11 +24,12 @@ struct BenchmarkConfig {
     int output_size = 10;
     int num_epochs = 10;
     int batch_size = 32;
-    int num_samples = 60000; // Full MNIST training dataset (60,000 images)
+    int num_samples = 10000; // Full MNIST training dataset (60,000 images)
     float learning_rate = 0.01f;
     bool verbose = true;
     string dataset_name = "MNIST";
     bool use_fashion_mnist = false;  // true for Fashion-MNIST, false for regular MNIST
+    bool use_cifar10 = false;        // true for CIFAR-10 dataset
     unsigned int random_seed = 42;   // Fixed seed for reproducible results
 
 };
@@ -49,6 +53,7 @@ public:
 
 private:
     BenchmarkConfig config;
+    bool enable_csv = false; // Control CSV output (disabled by default)
     
     // MNIST file paths - same as used in MNIST_experiment.cpp
     vector<string> MNISTfileVec{
@@ -63,6 +68,14 @@ private:
         "C:\\DEV\\Datasets\\train-labels-idx1-ubyte",  // Training labels
         "C:\\DEV\\Datasets\\t10k-images-idx3-ubyte",   // Testing images
         "C:\\DEV\\Datasets\\t10k-labels-idx1-ubyte"    // Testing labels
+    };
+
+    // CIFAR-10 file paths (.npy format: train images/labels, test images/labels)
+    vector<string> CIFAR10fileVec{
+        "C:\\DEV\\Datasets\\train_images.npy",   // [N,32,32,3] uint8
+        "C:\\DEV\\Datasets\\train_labels.npy",   // [N] int64
+        "C:\\DEV\\Datasets\\test_images.npy",    // [M,32,32,3] uint8 (unused for training)
+        "C:\\DEV\\Datasets\\test_labels.npy"     // [M] int64 (unused)
     };
     
     // Load real MNIST dataset using the same approach as MNIST_experiment.cpp
@@ -137,6 +150,117 @@ private:
         
         return make_pair(shuffled_inputs, shuffled_targets);
     }
+
+    // Parse .npy header helper (MINIMAL – supports |u1 and <i8 dtypes)
+    static bool parseNpyHeader(std::ifstream &ifs, std::vector<size_t> &shape, size_t &wordSize) {
+        char magic[6];
+        ifs.read(magic, 6);
+        if (std::strncmp(magic, "\x93NUMPY", 6) != 0) return false;
+
+        unsigned char major, minor;
+        ifs.read(reinterpret_cast<char*>(&major), 1);
+        ifs.read(reinterpret_cast<char*>(&minor), 1);
+
+        uint16_t hdr16 = 0; uint32_t hdr32 = 0; size_t headerLen = 0;
+        if (major == 1) {
+            ifs.read(reinterpret_cast<char*>(&hdr16), 2);
+            headerLen = hdr16;
+        } else {
+            ifs.read(reinterpret_cast<char*>(&hdr32), 4);
+            headerLen = hdr32;
+        }
+
+        std::string header(headerLen, ' ');
+        ifs.read(header.data(), headerLen);
+
+        const std::string descrKey = "'descr':";
+        auto posDescr = header.find(descrKey);
+        if (posDescr == std::string::npos) return false;
+        auto q1 = header.find("'", posDescr + descrKey.size());
+        auto q2 = header.find("'", q1 + 1);
+        std::string descr = header.substr(q1 + 1, q2 - q1 - 1);
+        if (descr == "|u1") wordSize = 1;
+        else if (descr == "<i8") wordSize = 8;
+        else return false;
+
+        const std::string shapeKey = "'shape':";
+        auto posShape = header.find(shapeKey);
+        if (posShape == std::string::npos) return false;
+        auto p1 = header.find('(', posShape);
+        auto p2 = header.find(')', p1);
+        std::string shapeContent = header.substr(p1 + 1, p2 - p1 - 1);
+        std::stringstream ss(shapeContent);
+        while (ss.good()) {
+            size_t dim; char comma;
+            ss >> dim; shape.push_back(dim); ss >> comma;
+        }
+        return true;
+    }
+
+    // Load CIFAR-10 dataset (train split only)
+    pair<vector<vector<float>>, vector<vector<float>>> loadCIFAR10Dataset() {
+        vector<vector<float>> inputs;
+        vector<vector<float>> targets;
+
+        // --- Load labels (int64) ---
+        std::ifstream lblFile(CIFAR10fileVec[1], ios::binary);
+        if (!lblFile.is_open()) {
+            throw runtime_error("Cannot open CIFAR-10 label file");
+        }
+        std::vector<size_t> lblShape; size_t lblWord;
+        if (!parseNpyHeader(lblFile, lblShape, lblWord)) {
+            throw runtime_error("CIFAR-10 label header parse error");
+        }
+        size_t Ntrain = lblShape[0];
+        std::vector<int64_t> trainLabels(Ntrain);
+        lblFile.read(reinterpret_cast<char*>(trainLabels.data()), Ntrain * sizeof(int64_t));
+        lblFile.close();
+
+        // --- Load images (uint8) ---
+        std::ifstream imgFile(CIFAR10fileVec[0], ios::binary);
+        if (!imgFile.is_open()) {
+            throw runtime_error("Cannot open CIFAR-10 image file");
+        }
+        std::vector<size_t> imgShape; size_t imgWord;
+        if (!parseNpyHeader(imgFile, imgShape, imgWord)) {
+            throw runtime_error("CIFAR-10 image header parse error");
+        }
+        size_t H = imgShape[1], W = imgShape[2], C = imgShape[3];
+        const size_t imageSize = H * W * C; // 32*32*3 = 3072
+        std::vector<uint8_t> imgBuf(imageSize);
+
+        size_t samplesLoaded = 0;
+        while (samplesLoaded < static_cast<size_t>(config.num_samples) &&
+               imgFile.read(reinterpret_cast<char*>(imgBuf.data()), imageSize)) {
+            // Normalize pixels
+            std::vector<float> pixels(imageSize);
+            for (size_t p = 0; p < imageSize; ++p) pixels[p] = imgBuf[p] / 255.0f;
+            inputs.push_back(std::move(pixels));
+
+            // One-hot target
+            std::vector<float> target(config.output_size, 0.0f);
+            int lbl = static_cast<int>(trainLabels[samplesLoaded]);
+            if (lbl >= config.output_size) lbl %= config.output_size;
+            target[lbl] = 1.0f;
+            targets.push_back(std::move(target));
+
+            ++samplesLoaded;
+        }
+        imgFile.close();
+
+        // Shuffle for better training
+        std::vector<size_t> idx(inputs.size());
+        std::iota(idx.begin(), idx.end(), 0);
+        std::mt19937 g(config.random_seed);
+        std::shuffle(idx.begin(), idx.end(), g);
+        vector<vector<float>> s_inputs, s_targets;
+        for (size_t i : idx) { s_inputs.push_back(std::move(inputs[i])); s_targets.push_back(std::move(targets[i])); }
+
+        if (config.verbose) {
+            std::cout << "Loaded " << s_inputs.size() << " CIFAR-10 samples" << std::endl;
+        }
+        return make_pair(std::move(s_inputs), std::move(s_targets));
+    }
     
     double calculateAccuracy(const vector<vector<float>>& predictions, 
                            const vector<vector<float>>& targets) {
@@ -186,8 +310,8 @@ private:
             std::cout << "Max Work Group Size: " << metrics.max_work_group_size << std::endl;
         }
         
-        // Load MNIST dataset
-        auto [inputs, targets] = loadMNISTDataset();
+        // Load requested dataset
+        auto [inputs, targets] = config.use_cifar10 ? loadCIFAR10Dataset() : loadMNISTDataset();
         
         // Set learning rate
         network.setLearningRate(config.learning_rate);
@@ -298,6 +422,8 @@ public:
         config = cfg;
     }
     
+    void setEnableCSV(bool flag) { enable_csv = flag; }
+    
     pair<PerformanceMetrics, PerformanceMetrics> runComparison() {
         std::cout << "=== SYCL Neural Network CPU vs GPU Benchmark ===" << std::endl;
         std::cout << "Configuration:" << std::endl;
@@ -317,10 +443,11 @@ public:
                                 config.hidden2_size, config.output_size, config.random_seed);
         
         // Benchmark CPU version
-        auto cpu_metrics = benchmarkNetwork(cpu_network, "CPU");
-        
-        // Benchmark GPU version  
         auto gpu_metrics = benchmarkNetwork(gpu_network, "GPU");
+
+        auto cpu_metrics = benchmarkNetwork(cpu_network, "CPU");
+        //auto cpu_metrics = PerformanceMetrics();
+        // Benchmark GPU version  
         
         return make_pair(cpu_metrics, gpu_metrics);
     }
@@ -399,6 +526,9 @@ public:
     void saveResultsToCSV(const PerformanceMetrics& cpu_metrics, 
                          const PerformanceMetrics& gpu_metrics, 
                          const string& filename = "benchmark_results.csv") {
+        if (!enable_csv) {
+            return; // CSV generation disabled
+        }
         ofstream file(filename);
         
         if (!file.is_open()) {
@@ -447,7 +577,7 @@ public:
         BenchmarkConfig small_config;
         small_config.input_size = 784; small_config.hidden1_size = 64; small_config.hidden2_size = 32;
         small_config.output_size = 10; small_config.num_epochs = 5; small_config.batch_size = 16;
-        small_config.num_samples = 60000; small_config.learning_rate = 0.01f; small_config.verbose = false;
+        small_config.num_samples = 10000; small_config.learning_rate = 0.01f; small_config.verbose = false;
         small_config.dataset_name = "MNIST_small_net"; small_config.use_fashion_mnist = false; small_config.random_seed = 42;
         configs.push_back(small_config);
         
@@ -455,7 +585,7 @@ public:
         BenchmarkConfig medium_config;
         medium_config.input_size = 784; medium_config.hidden1_size = 128; medium_config.hidden2_size = 64;
         medium_config.output_size = 10; medium_config.num_epochs = 10; medium_config.batch_size = 32;
-        medium_config.num_samples = 60000; medium_config.learning_rate = 0.01f; medium_config.verbose = false;
+        medium_config.num_samples = 10000; medium_config.learning_rate = 0.01f; medium_config.verbose = false;
         medium_config.dataset_name = "MNIST_medium_net"; medium_config.use_fashion_mnist = false; medium_config.random_seed = 42;
         configs.push_back(medium_config);
         
@@ -463,7 +593,7 @@ public:
         BenchmarkConfig large_config;
         large_config.input_size = 784; large_config.hidden1_size = 256; large_config.hidden2_size = 128;
         large_config.output_size = 10; large_config.num_epochs = 10; large_config.batch_size = 64;
-        large_config.num_samples = 60000; large_config.learning_rate = 0.01f; large_config.verbose = false;
+        large_config.num_samples = 10000; large_config.learning_rate = 0.01f; large_config.verbose = false;
         large_config.dataset_name = "MNIST_large_net"; large_config.use_fashion_mnist = false; large_config.random_seed = 42;
         configs.push_back(large_config);
         
@@ -471,14 +601,14 @@ public:
         BenchmarkConfig batch8_config;
         batch8_config.input_size = 784; batch8_config.hidden1_size = 128; batch8_config.hidden2_size = 64;
         batch8_config.output_size = 10; batch8_config.num_epochs = 5; batch8_config.batch_size = 8;
-        batch8_config.num_samples = 60000; batch8_config.learning_rate = 0.01f; batch8_config.verbose = false;
+        batch8_config.num_samples = 10000; batch8_config.learning_rate = 0.01f; batch8_config.verbose = false;
         batch8_config.dataset_name = "MNIST_batch_8"; batch8_config.use_fashion_mnist = false; batch8_config.random_seed = 42;
         configs.push_back(batch8_config);
         
         BenchmarkConfig batch128_config;
         batch128_config.input_size = 784; batch128_config.hidden1_size = 128; batch128_config.hidden2_size = 64;
         batch128_config.output_size = 10; batch128_config.num_epochs = 5; batch128_config.batch_size = 128;
-        batch128_config.num_samples = 60000; batch128_config.learning_rate = 0.01f; batch128_config.verbose = false;
+        batch128_config.num_samples = 10000; batch128_config.learning_rate = 0.01f; batch128_config.verbose = false;
         batch128_config.dataset_name = "MNIST_batch_128"; batch128_config.use_fashion_mnist = false; batch128_config.random_seed = 42;
         configs.push_back(batch128_config);
         
@@ -486,7 +616,7 @@ public:
         BenchmarkConfig fashion_config;
         fashion_config.input_size = 784; fashion_config.hidden1_size = 128; fashion_config.hidden2_size = 64;
         fashion_config.output_size = 10; fashion_config.num_epochs = 10; fashion_config.batch_size = 32;
-        fashion_config.num_samples = 60000; fashion_config.learning_rate = 0.01f; fashion_config.verbose = false;
+        fashion_config.num_samples = 10000; fashion_config.learning_rate = 0.01f; fashion_config.verbose = false;
         fashion_config.dataset_name = "Fashion_MNIST_comparison"; fashion_config.use_fashion_mnist = true; fashion_config.random_seed = 42;
         configs.push_back(fashion_config);
         

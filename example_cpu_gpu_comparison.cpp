@@ -3,6 +3,10 @@
 #include <string>
 #include <vector>
 #include <iomanip>
+#include <cstring>
+#include <sstream>
+#include <cstdint>
+#include "ImageNew.h"
 
 /**
  * SYCL Neural Network CPU vs GPU Benchmark Example - REAL MNIST DATA
@@ -20,6 +24,7 @@
  * - CSV output for further analysis and paper writing
  */
 
+
 void runBasicComparison() {
     std::cout << "=== BASIC CPU vs GPU COMPARISON ===" << std::endl;
     
@@ -31,7 +36,7 @@ void runBasicComparison() {
     config.output_size = 10;      // Classification classes
     config.num_epochs = 10;       // Training epochs
     config.batch_size = 32;       // Batch size for training
-    config.num_samples = 60000;   // Full MNIST training dataset
+    config.num_samples = 10000;   // Full MNIST training dataset
     config.learning_rate = 0.01f; // Learning rate
     config.verbose = true;        // Print detailed progress
     config.dataset_name = "MNIST_basic_comparison";
@@ -56,151 +61,6 @@ void runBasicComparison() {
     std::cout << "4. Performance differences depend on problem size and hardware capabilities" << std::endl;
     std::cout << "5. CPU may outperform GPU for small problems due to lower overhead" << std::endl;
     std::cout << "6. GPU typically excels with larger batch sizes and network dimensions" << std::endl;
-}
-
-void runNetworkSizeAnalysis() {
-    std::cout << "\n=== NETWORK SIZE ANALYSIS ===" << std::endl;
-    std::cout << "Testing different network architectures to find CPU vs GPU crossover points" << std::endl;
-    
-    struct NetworkConfig {
-        std::string name;
-        int hidden1;
-        int hidden2;
-        std::string description;
-    };
-    
-    std::vector<NetworkConfig> networks = {
-        {"tiny", 32, 16, "Tiny network - CPU should excel"},
-        {"small", 64, 32, "Small network - competitive performance"},
-        {"medium", 128, 64, "Medium network - GPU starts to win"},
-        {"large", 256, 128, "Large network - GPU should dominate"},
-        {"xlarge", 512, 256, "Extra large - GPU advantage clear"}
-    };
-    
-    for (const auto& net : networks) {
-        std::cout << "\n--- Testing " << net.name << " network: " << net.description << " ---" << std::endl;
-        
-        BenchmarkConfig config;
-        config.input_size = 784;
-        config.hidden1_size = net.hidden1;
-        config.hidden2_size = net.hidden2;
-        config.output_size = 10;
-        config.num_epochs = 5;
-        config.batch_size = 32;
-        config.num_samples = 60000;  // Full MNIST dataset
-        config.learning_rate = 0.01f;
-        config.verbose = false;  // Reduce verbosity for multiple runs
-        config.dataset_name = net.name + "_network";
-        config.random_seed = 42;     // Fixed seed for reproducibility
-        
-        BenchmarkComparison benchmark(config);
-        auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
-        
-        // Quick summary
-        double speedup = gpu_metrics.throughput_samples_per_sec / cpu_metrics.throughput_samples_per_sec;
-        std::cout << "Network: " << net.name 
-                  << " | GPU Speedup: " << std::fixed << std::setprecision(2) << speedup << "x";
-        
-        if (speedup > 1.0) {
-            std::cout << " (GPU faster)";
-        } else {
-            std::cout << " (CPU faster)";
-        }
-        std::cout << std::endl;
-        
-        // Save detailed results
-        benchmark.saveResultsToCSV(cpu_metrics, gpu_metrics, 
-                                   "network_size_" + net.name + ".csv");
-    }
-}
-
-void runBatchSizeAnalysis() {
-    std::cout << "\n=== BATCH SIZE ANALYSIS ===" << std::endl;
-    std::cout << "Testing different batch sizes to understand parallelization efficiency" << std::endl;
-    
-    std::vector<int> batch_sizes = {16, 32, 64, 128, 256, 512, 1024, 2048};
-    
-    for (int batch_size : batch_sizes) {
-        std::cout << "\n--- Testing batch size: " << batch_size << " ---" << std::endl;
-        
-        BenchmarkConfig config;
-        config.input_size = 784;
-        config.hidden1_size = 128;
-        config.hidden2_size = 64;
-        config.output_size = 10;
-        config.num_epochs = 3;
-        config.batch_size = batch_size;
-        config.num_samples = 60000;  // Full MNIST dataset
-        config.learning_rate = 0.01f;
-        config.verbose = false;
-        config.dataset_name = "batch_" + std::to_string(batch_size);
-        config.random_seed = 42;     // Fixed seed for reproducibility
-        
-        BenchmarkComparison benchmark(config);
-        auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
-        
-        // Quick summary focusing on throughput
-        std::cout << "Batch " << std::setw(3) << batch_size 
-                  << " | CPU: " << std::setw(8) << std::fixed << std::setprecision(1) 
-                  << cpu_metrics.throughput_samples_per_sec << " samp/s"
-                  << " | GPU: " << std::setw(8) << gpu_metrics.throughput_samples_per_sec << " samp/s"
-                  << " | Ratio: " << std::setw(6) << std::setprecision(2) 
-                  << (gpu_metrics.throughput_samples_per_sec / cpu_metrics.throughput_samples_per_sec) << "x"
-                  << std::endl;
-        
-        benchmark.saveResultsToCSV(cpu_metrics, gpu_metrics, 
-                                   "batch_analysis_" + std::to_string(batch_size) + ".csv");
-    }
-}
-
-void runMemoryUsageAnalysis() {
-    std::cout << "\n=== MEMORY USAGE ANALYSIS ===" << std::endl;
-    std::cout << "Analyzing memory efficiency of CPU vs GPU implementations" << std::endl;
-    
-    struct TestCase {
-        std::string name;
-        int samples;
-        int batch_size;
-    };
-    
-    std::vector<TestCase> cases = {
-        {"small_dataset", 500, 16},
-        {"medium_dataset", 2000, 32},
-        {"large_dataset", 5000, 64},
-        {"xlarge_dataset", 10000, 128}
-    };
-    
-    for (const auto& test_case : cases) {
-        std::cout << "\n--- Testing " << test_case.name << " ---" << std::endl;
-        
-        BenchmarkConfig config;
-        config.input_size = 784;
-        config.hidden1_size = 128;
-        config.hidden2_size = 64;
-        config.output_size = 10;
-        config.num_epochs = 3;
-        config.batch_size = test_case.batch_size;
-        config.num_samples = test_case.samples;
-        config.learning_rate = 0.01f;
-        config.verbose = false;
-        config.dataset_name = test_case.name;
-        config.random_seed = 42;     // Fixed seed for reproducibility
-        
-        BenchmarkComparison benchmark(config);
-        auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
-        
-        std::cout << "Dataset: " << test_case.name << std::endl;
-        std::cout << "  CPU Memory: " << std::fixed << std::setprecision(1) 
-                  << cpu_metrics.memory_usage_bytes / (1024.0 * 1024.0) << " MB" << std::endl;
-        std::cout << "  GPU Memory: " << gpu_metrics.memory_usage_bytes / (1024.0 * 1024.0) << " MB" << std::endl;
-        std::cout << "  Memory Ratio (GPU/CPU): " << std::setprecision(2) 
-                  << (double)gpu_metrics.memory_usage_bytes / cpu_metrics.memory_usage_bytes << "x" << std::endl;
-        std::cout << "  Performance Ratio (GPU/CPU): " 
-                  << (gpu_metrics.throughput_samples_per_sec / cpu_metrics.throughput_samples_per_sec) << "x" << std::endl;
-        
-        benchmark.saveResultsToCSV(cpu_metrics, gpu_metrics, 
-                                   "memory_analysis_" + test_case.name + ".csv");
-    }
 }
 
 void runComprehensiveAnalysis() {
@@ -255,6 +115,117 @@ void demonstrateDeviceInformation() {
     }
 }
 
+// Run the benchmark using the Fashion-MNIST dataset
+void runFashionComparison() {
+    std::cout << "\n=== BASIC CPU vs GPU COMPARISON (Fashion-MNIST) ===" << std::endl;
+    
+    BenchmarkConfig config;
+    config.input_size = 784;
+    config.hidden1_size = 128;
+    config.hidden2_size = 64;
+    config.output_size = 10;
+    config.num_epochs = 10;
+    config.batch_size = 32;
+    config.num_samples = 10000;
+    config.learning_rate = 0.01f;
+    config.verbose = true;
+    config.dataset_name = "Fashion_MNIST_basic_comparison";
+    config.use_fashion_mnist = true;  // key difference
+    config.random_seed = 42;
+
+    BenchmarkComparison benchmark(config);
+    auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
+    benchmark.printComparison(cpu_metrics, gpu_metrics);
+}
+
+// Basic comparison for CIFAR-10
+void runCIFARComparison() {
+    std::cout << "\n=== BASIC CPU vs GPU COMPARISON (CIFAR-10) ===" << std::endl;
+
+    BenchmarkConfig config;
+    config.input_size = 3072;  // 32x32x3
+    config.hidden1_size = 512;
+    config.hidden2_size = 256;
+    config.output_size = 10;
+    config.num_epochs = 10;
+    config.batch_size = 64;
+    config.num_samples = 10000;
+    config.learning_rate = 0.01f;
+    config.verbose = true;
+    config.dataset_name = "CIFAR10_basic_comparison";
+    config.use_cifar10 = true;
+    config.random_seed = 42;
+
+    BenchmarkComparison benchmark(config);
+    auto [cpu_metrics, gpu_metrics] = benchmark.runComparison();
+    benchmark.printComparison(cpu_metrics, gpu_metrics);
+}
+
+// Network size analysis helper for arbitrary dataset
+void runNetworkSizeAnalysisGeneric(const std::string& tag, int input_size, bool use_fashion, bool use_cifar) {
+    std::cout << "\n=== NETWORK SIZE ANALYSIS (" << tag << ") ===" << std::endl;
+
+    struct NetCfg { std::string name; int h1; int h2; std::string desc; };
+    std::vector<NetCfg> nets = {
+        {"tiny", 32, 16, "Tiny network - CPU should excel"},
+        {"small", 64, 32, "Small network - competitive performance"},
+        {"medium", 128, 64, "Medium network - GPU starts to win"},
+        {"large", 256, 128, "Large network - GPU should dominate"},
+        {"xlarge", 512, 256, "Extra large - GPU advantage clear"}
+    };
+
+    for (const auto& n : nets) {
+        std::cout << "\n--- " << n.name << " : " << n.desc << " ---" << std::endl;
+
+        BenchmarkConfig cfg;
+        cfg.input_size = input_size;
+        cfg.hidden1_size = n.h1;
+        cfg.hidden2_size = n.h2;
+        cfg.output_size = 10;
+        cfg.num_epochs = 5;
+        cfg.batch_size = 32;
+        cfg.num_samples = 10000;
+        cfg.learning_rate = 0.01f;
+        cfg.verbose = false;
+        cfg.dataset_name = tag + "_" + n.name;
+        cfg.use_fashion_mnist = use_fashion;
+        cfg.use_cifar10      = use_cifar;
+        cfg.random_seed = 42;
+
+        BenchmarkComparison bench(cfg);
+        auto [cpu_metrics, gpu_metrics] = bench.runComparison();
+        bench.printComparison(cpu_metrics, gpu_metrics);
+    }
+}
+
+// Batch size analysis generic
+void runBatchSizeAnalysisGeneric(const std::string& tag, int input_size, bool use_fashion, bool use_cifar) {
+    std::cout << "\n=== BATCH SIZE ANALYSIS (" << tag << ") ===" << std::endl;
+
+    std::vector<int> batch_sizes = {16, 32, 64, 128, 256, 512, 1024};
+    for (int bs : batch_sizes) {
+        std::cout << "\n--- Batch size: " << bs << " ---" << std::endl;
+        BenchmarkConfig cfg;
+        cfg.input_size = input_size;
+        cfg.hidden1_size = 128;
+        cfg.hidden2_size = 64;
+        cfg.output_size = 10;
+        cfg.num_epochs = 3;
+        cfg.batch_size = bs;
+        cfg.num_samples = 10000;
+        cfg.learning_rate = 0.01f;
+        cfg.verbose = false;
+        cfg.dataset_name = tag + "_batch_" + std::to_string(bs);
+        cfg.use_fashion_mnist = use_fashion;
+        cfg.use_cifar10       = use_cifar;
+        cfg.random_seed = 42;
+
+        BenchmarkComparison bench(cfg);
+        auto [cpu_m, gpu_m] = bench.runComparison();
+        bench.printComparison(cpu_m, gpu_m);
+    }
+}
+
 int main() {
     std::cout << "SYCL Neural Network CPU vs GPU Baseline Comparison - MNIST Dataset" << std::endl;
     std::cout << "=================================================================" << std::endl;
@@ -265,30 +236,28 @@ int main() {
         // Show available devices
         demonstrateDeviceInformation();
         
-        // Run basic comparison
+        // --- MNIST ---
         runBasicComparison();
-        
-        // Run detailed analyses
-        runNetworkSizeAnalysis();
-        runBatchSizeAnalysis();
-        runMemoryUsageAnalysis();
-        
-        // Run comprehensive analysis for research
-        runComprehensiveAnalysis();
-        
+        runNetworkSizeAnalysisGeneric("MNIST", 784, false, false);
+        runBatchSizeAnalysisGeneric("MNIST", 784, false, false);
+
+        // --- Fashion-MNIST ---
+        runFashionComparison();
+        runNetworkSizeAnalysisGeneric("FashionMNIST", 784, true, false);
+        runBatchSizeAnalysisGeneric("FashionMNIST", 784, true, false);
+
+        // --- CIFAR-10 ---
+        runCIFARComparison();
+        runNetworkSizeAnalysisGeneric("CIFAR10", 3072, false, true);
+        runBatchSizeAnalysisGeneric("CIFAR10", 3072, false, true);
+
         std::cout << "\n=== BENCHMARK COMPLETE ===" << std::endl;
-        std::cout << "All results have been saved to CSV files for further analysis." << std::endl;
-        std::cout << "Use these results as baselines for your research paper." << std::endl;
-        
-        std::cout << "\n=== FILES GENERATED ===" << std::endl;
-        std::cout << "- basic_comparison.csv: Basic CPU vs GPU metrics" << std::endl;
-        std::cout << "- network_size_*.csv: Network architecture analysis" << std::endl;
-        std::cout << "- batch_analysis_*.csv: Batch size performance study" << std::endl;
-        std::cout << "- memory_analysis_*.csv: Memory usage comparison" << std::endl;
-        std::cout << "- results_*.csv: Comprehensive benchmark suite" << std::endl;
+        std::cout << "Redirect this output to a TXT file if desired." << std::endl;
         
     } catch (const std::exception& e) {
+        
         std::cerr << "Error during benchmark execution: " << e.what() << std::endl;
+        std::rethrow_exception(std::current_exception());
         return 1;
     }
     

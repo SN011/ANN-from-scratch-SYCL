@@ -155,7 +155,14 @@ void testSigmoidOperations(sycl::queue& q) {
 }
 
 int main() {
-    sycl::queue q{ gpu_selector{} };
+    sycl::async_handler ah = [](auto l) { 
+        for (auto& e : l) try { 
+            std::rethrow_exception(e); 
+        } catch (const sycl::exception& ex) { 
+            std::cerr << "ASYNC " << ex.what() << '\n'; 
+        } 
+    };
+    sycl::queue q{ gpu_selector{}, ah };
 
     std::cout << "Testing Matrix Multiplication..." << std::endl;
     testMatrixMultiply(q);

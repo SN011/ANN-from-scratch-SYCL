@@ -51,16 +51,18 @@ public:
         nn_topology.push_back(hid2);
         nn_topology.push_back(out);
 
-        // Initialize weight and bias matrices with CPU-optimized approach
-        for (size_t i = 0; i < nn_topology.size() - 1; i++) {
-            Matrix_CPU wts(nn_topology[i + 1], nn_topology[i], q);
-            // Xavier initialization with fixed seed for reproducibility
-            wts.RandInit(nn_topology[i], nn_topology[i + 1], seed + i);
-            weightMatrices.push_back(std::move(wts));
+        // Initialize weight and bias matrices with CPU-optimized approach (in-place construction)
+        weightMatrices.reserve(nn_topology.size() - 1);
+        biasMatrices.reserve(nn_topology.size() - 1);
 
-            Matrix_CPU b(nn_topology[i + 1], 1, q);
-            // Biases initialized to 0 (default constructor already does this)
-            biasMatrices.push_back(std::move(b));
+        for (size_t i = 0; i + 1 < nn_topology.size(); ++i) {
+            // Construct weight matrix directly inside vector
+            weightMatrices.emplace_back(nn_topology[i + 1], nn_topology[i], q);
+            auto &W = weightMatrices.back();
+            W.RandInit(nn_topology[i], nn_topology[i + 1], seed + static_cast<unsigned int>(i));
+
+            // Construct bias matrix (zero-initialised by default)
+            biasMatrices.emplace_back(nn_topology[i + 1], 1, q);
         }
     }
 

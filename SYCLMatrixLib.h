@@ -15,98 +15,28 @@ using namespace sycl;
 
 class Matrix {
 public:
-    enum class ElementWiseOp {
-        ADD_CONST,
-        MUL_CONST,
-        NEGATE
-    };
-
     int rows;
     int cols;
     float* data; // Changed from vector<float> to float*
     sycl::queue* q_ptr; // Pointer to the SYCL queue
 
-private:
-    // Static ones vector for GEMV operations - indexed by size
-    static std::map<std::pair<sycl::queue*, int>, float*> ones_cache;
-    
-    // USM Memory pool - keyed by (queue, rows, cols) and stores vector of free pointers
-    static std::map<std::tuple<sycl::queue*, int, int>, std::vector<float*>> memory_pool;
+    // ---------------------------------------------------------------------
+    // Shared scratch buffers for Softmax to avoid frequent device allocations
+    // These live for the duration of the program and resize only when needed
+    // ---------------------------------------------------------------------
+    static inline float* softmax_tmp_max  = nullptr;
+    static inline float* softmax_tmp_sum  = nullptr;
+    static inline std::size_t softmax_capacity = 0;
 
-    // Helper function to get or create ones vector
-    float* getOnesVector(int size) {
-        auto key = std::make_pair(q_ptr, size);
-        auto it = ones_cache.find(key);
-        if (it != ones_cache.end()) {
-            return it->second;
-        }
-        
-        // Create new ones vector
-        float* ones = sycl::malloc_device<float>(size, *q_ptr);
-        if (!ones) {
-            throw std::runtime_error("Failed to allocate USM for ones vector.");
-        }
-        
-        // Initialize to all ones
-        q_ptr->submit([&](handler& h) {
-            h.parallel_for(range<1>(size), [=](id<1> i) {
-                ones[i] = 1.0f;
-            });
-        }).wait();
-        
-        ones_cache[key] = ones;
-        return ones;
-    }
-    
-    // Helper functions for memory pool management
-    float* getPooledMemory(int rows, int cols) {
-        auto key = std::make_tuple(q_ptr, rows, cols);
-        auto it = memory_pool.find(key);
-        
-        if (it != memory_pool.end() && !it->second.empty()) {
-            float* ptr = it->second.back();
-            it->second.pop_back();
-            return ptr;
-        }
-        
-        // No available memory in pool, allocate new
-        float* ptr = sycl::malloc_device<float>(rows * cols, *q_ptr);
-        return ptr;
-    }
-    
-    void returnPooledMemory(float* ptr, int rows, int cols) {
-        if (!ptr) return;
-        
-        auto key = std::make_tuple(q_ptr, rows, cols);
-        memory_pool[key].push_back(ptr);
-    }
 
 public:
     Matrix() : rows(0), cols(0), data(nullptr), q_ptr(nullptr) {}
 
-private:
-    // Fused element-wise operation kernel
-    template<ElementWiseOp OP>
-    void fused_elementwise(float value = 0.0f) {
-        int r = rows;
-        int c = cols;
-        q_ptr->submit([&](handler& h) {
-            auto ptr = data;
-            h.parallel_for(range<1>(r * c), [=](id<1> i) {
-                if constexpr (OP == ElementWiseOp::ADD_CONST) {
-                    ptr[i] += value;
-                } else if constexpr (OP == ElementWiseOp::MUL_CONST) {
-                    ptr[i] *= value;
-                } else if constexpr (OP == ElementWiseOp::NEGATE) {
-                    ptr[i] *= -1.0f;
-                }
-            });
-        });
-    }
+
 
 public:
     Matrix(int r, int c, sycl::queue& q) : rows(r), cols(c), q_ptr(&q) {
-        data = getPooledMemory(rows, cols);
+        data = sycl::malloc_shared<float>(rows * cols, q);
         if (!data) {
             throw std::runtime_error("Failed to allocate USM for Matrix data.");
         }
@@ -115,7 +45,7 @@ public:
     // Copy constructor for Matrix (deep copy for USM)
     Matrix(const Matrix& other) : rows(other.rows), cols(other.cols), q_ptr(other.q_ptr) {
         if (q_ptr) {
-            data = const_cast<Matrix*>(&other)->getPooledMemory(rows, cols);
+            data = sycl::malloc_shared<float>(rows * cols, *q_ptr);
             if (!data) {
                 throw std::runtime_error("Failed to allocate USM for Matrix data in copy constructor.");
             }
@@ -138,13 +68,15 @@ public:
     Matrix& operator=(const Matrix& other) {
         if (this != &other) {
             if (data && q_ptr) {
-                returnPooledMemory(data, rows, cols);
+                // Ensure all operations using this buffer are complete before freeing
+                q_ptr->wait();
+                sycl::free(data, *q_ptr);
             }
             rows = other.rows;
             cols = other.cols;
             q_ptr = other.q_ptr;
             if (q_ptr) {
-                data = getPooledMemory(rows, cols);
+                data = sycl::malloc_shared<float>(rows * cols, *q_ptr);
                 if (!data) {
                     throw std::runtime_error("Failed to allocate USM for Matrix data in copy assignment.");
                 }
@@ -161,7 +93,9 @@ public:
     Matrix& operator=(Matrix&& other) noexcept {
         if (this != &other) {
             if (data && q_ptr) {
-                returnPooledMemory(data, rows, cols);
+                // Ensure all operations using this buffer are complete before freeing
+                q_ptr->wait();
+                sycl::free(data, *q_ptr);
             }
             rows = other.rows;
             cols = other.cols;
@@ -178,13 +112,37 @@ public:
 
     ~Matrix() {
         if (data && q_ptr) {
-            returnPooledMemory(data, rows, cols);
+            try {
+                q_ptr->wait_and_throw();
+            } catch (const sycl::exception& e) {
+                std::cerr << "SYCL async error during Matrix destruction: " << e.what() << std::endl;
+                // Swallow exception to avoid abort inside destructor
+            }
+            try {
+                sycl::free(data, *q_ptr);
+            } catch (const sycl::exception& e) {
+                // This can happen if the queue/device is already in a bad state
+                std::cerr << "SYCL error during free in Matrix destructor: " << e.what() << std::endl;
+            }
             data = nullptr;
             q_ptr = nullptr;
         }
     }
 
+    // Resize matrix dimensions without reallocating (for reusing scratch matrices)
+    void resizeInPlace(int new_rows, int new_cols) {
+        if (new_rows <= 0 || new_cols <= 0) {
+            throw std::runtime_error("Cannot resize matrix to zero or negative dimensions.");
+        }
+        if (new_rows * new_cols > rows * cols) {
+            throw std::runtime_error("Cannot resize matrix to larger size than originally allocated.");
+        }
+        rows = new_rows;
+        cols = new_cols;
+    }
+
     void RandInit(int fan_in = 0, int fan_out = 0, unsigned int seed = 0) {
+        std::mt19937 gen(seed == 0 ? std::random_device{}() : seed);
         float limit;
         if (fan_in > 0 && fan_out > 0) {
             limit = std::sqrt(6.0f / (fan_in + fan_out));
@@ -192,38 +150,14 @@ public:
         else {
             limit = 1.0f; // Default range if no fan_in/fan_out is provided
         }
-        
-        // Use shared USM for temporary storage
-        float* temp_data = sycl::malloc_shared<float>(rows * cols, *q_ptr);
-        if (!temp_data) {
-            throw std::runtime_error("Failed to allocate shared USM for RandInit.");
+        std::uniform_real_distribution<float> dist(-limit, limit);
+        std::vector<float> host_data(rows * cols);
+        for (int i = 0; i < rows * cols; i++) {
+            host_data[i] = dist(gen);
         }
-        
-        unsigned int base_seed = (seed == 0) ? std::random_device{}() : seed;
-        int total_elements = rows * cols;
-        
-        q_ptr->submit([&](handler& h) {
-            h.parallel_for(range<1>(total_elements), [=](id<1> i) {
-                // XOR-SHIFT random number generator
-                unsigned int local_seed = base_seed + i[0] + 1; // Ensure non-zero seed
-                
-                // XOR-SHIFT algorithm
-                local_seed ^= local_seed << 13;
-                local_seed ^= local_seed >> 17;
-                local_seed ^= local_seed << 5;
-                
-                // Convert to float in range [0, 1)
-                float rand_01 = (local_seed & 0x7FFFFFFF) / float(0x7FFFFFFF);
-                
-                // Scale to desired range [-limit, limit]
-                temp_data[i] = (rand_01 * 2.0f - 1.0f) * limit;
-            });
-        }).wait();
-        
-        // Copy from shared USM to device USM
-        q_ptr->memcpy(data, temp_data, rows * cols * sizeof(float)).wait();
-        
-        sycl::free(temp_data, *q_ptr);
+        q_ptr->memcpy(data, host_data.data(), rows * cols * sizeof(float)).wait();
+        // Ensure all kernels that might have been enqueued for this matrix finish
+        q_ptr->wait_and_throw();
     }
 
     void printMatrix() const {
@@ -238,15 +172,36 @@ public:
     }
 
     void multiplyScalar(float n) {
-        fused_elementwise<ElementWiseOp::MUL_CONST>(n);
+        int r = rows;
+        int c = cols;
+        q_ptr->submit([&](handler& h) {
+            auto ptr = data;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                ptr[i] *= n;
+                });
+            });
     }
 
     void addScalar(float n) {
-        fused_elementwise<ElementWiseOp::ADD_CONST>(n);
+        int r = rows;
+        int c = cols;
+        q_ptr->submit([&](handler& h) {
+            auto ptr = data;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                ptr[i] += n;
+                });
+            });
     }
 
     void negate() {
-        fused_elementwise<ElementWiseOp::NEGATE>();
+        int r = rows;
+        int c = cols;
+        q_ptr->submit([&](handler& h) {
+            auto ptr = data;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                ptr[i] *= -1;
+                });
+            });
     }
 
     Matrix Negate() {
@@ -391,16 +346,36 @@ public:
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
+    static void subtract(const Matrix& m1, const Matrix& m2, Matrix& dest, sycl::queue& q) {
+        if (m1.rows != m2.rows || m1.cols != m2.cols) {
+            throw std::invalid_argument("Matrix dimensions do not match for subtraction.");
+        }
+        if (dest.rows != m1.rows || dest.cols != m1.cols) {
+            throw std::invalid_argument("Destination matrix dimensions do not match result dimensions.");
+        }
+
+        int r = m1.rows;
+        int c = m1.cols;
+        const float* aPtr = m1.data;
+        const float* bPtr = m2.data;
+        float* resPtr = dest.data;
+
+        q.submit([&](handler& h) {
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                resPtr[i] = aPtr[i] - bPtr[i];
+                });
+            });
+    }
+
     void multiply(const Matrix& other) {
         if (cols != other.rows) {
             throw std::invalid_argument("Matrix dimensions do not match for multiplication.");
         }
 
-        Matrix output(rows, other.cols, *q_ptr); // Pass queue to new Matrix constructor
+        // Create a temporary matrix to hold the result
+        Matrix result(rows, other.cols, *q_ptr);
 
-        // Using oneMKL's gemm function for matrix multiplication
-        // C = alpha * A * B + beta * C
-        // Here, alpha = 1.0f, beta = 0.0f, C is initialized to zeros (implicitly by Matrix constructor)
+        // Using oneMKL's row-major gemm function for matrix multiplication
         try {
             oneapi::mkl::blas::row_major::gemm(
                 *q_ptr,
@@ -411,35 +386,36 @@ public:
                 cols,                             // k (cols of A and rows of B)
                 1.0f,                             // alpha
                 data,                             // A data (USM pointer)
-                cols,                             // lda (leading dimension of A - number of columns if row-major)
+                cols,                             // lda (leading dimension of A)
                 other.data,                       // B data (USM pointer)
-                other.cols,                       // ldb (leading dimension of B - number of columns if row-major)
+                other.cols,                       // ldb (leading dimension of B)
                 0.0f,                             // beta
-                output.data,                      // C data (USM pointer)
-                output.cols                       // ldc (leading dimension of C - number of columns if row-major)
+                result.data,                      // C data (USM pointer)
+                result.cols                       // ldc (leading dimension of C)
             );
         }
         catch (sycl::exception const& e) {
             std::cerr << "SYCL exception caught during GEMM: " << e.what() << std::endl;
         }
 
-        // No need to move data, just copy values to current object's data and update dimensions
-        // This assumes 'output' is a temporary and its USM will be freed by its destructor
-        // It is more efficient to swap the data pointers if 'output' is truly meant to replace 'this' data
-        // However, for simplicity and to match previous behavior, a memcpy is used for now.
-        q_ptr->memcpy(data, output.data, rows * other.cols * sizeof(float));
-        // Rows and cols already match output, so no change needed
+        // Replace this matrix's data with the result (efficient swap)
+        if (data && q_ptr) {
+            sycl::free(data, *q_ptr);
+        }
+        data = result.data;
+        cols = result.cols;
+        // Clear result's data pointer so it won't be freed by result's destructor
+        result.data = nullptr;
     }
 
-    static Matrix multiply(const Matrix& m1, const Matrix& m2, sycl::queue& q, 
-                          const std::vector<sycl::event>& deps = {}) {
+    static Matrix multiply(const Matrix& m1, const Matrix& m2, sycl::queue& q) {
         if (m1.cols != m2.rows) {
             throw std::invalid_argument("Matrix dimensions do not match for multiplication.");
         }
 
         Matrix result(m1.rows, m2.cols, q); // Pass queue to new Matrix constructor
 
-        // Using oneMKL's gemm function for matrix multiplication
+        // Using oneMKL's row-major gemm function for matrix multiplication
         try {
             oneapi::mkl::blas::row_major::gemm(
                 q,
@@ -450,13 +426,12 @@ public:
                 m1.cols,
                 1.0f,
                 m1.data, // USM pointer
-                m1.cols,
+                m1.cols, // lda - leading dimension (cols for row-major)
                 m2.data, // USM pointer
-                m2.cols,
+                m2.cols, // ldb - leading dimension (cols for row-major)
                 0.0f,
                 result.data, // USM pointer
-                result.cols,
-                deps  // Event dependencies
+                result.cols // ldc - leading dimension (cols for row-major)
             );
         }
         catch (sycl::exception const& e) {
@@ -466,47 +441,117 @@ public:
         return result;
     }
 
-    // New multiply function with transpose flags to avoid explicit transpose operations
-    static Matrix multiply_with_transpose(const Matrix& m1, const Matrix& m2, sycl::queue& q,
-                                          bool transpose_m1 = false, bool transpose_m2 = false,
-                                          const std::vector<sycl::event>& deps = {}) {
-        int m1_effective_rows = transpose_m1 ? m1.cols : m1.rows;
-        int m1_effective_cols = transpose_m1 ? m1.rows : m1.cols;
-        int m2_effective_rows = transpose_m2 ? m2.cols : m2.rows;
-        int m2_effective_cols = transpose_m2 ? m2.rows : m2.cols;
+    // Version that writes result to existing destination matrix (avoids allocation)
+    static void multiply(const Matrix& m1, const Matrix& m2, Matrix& dest, sycl::queue& q) {
+        // Assert that no matrix has zero dimensions
+        assert(m1.rows > 0 && m1.cols > 0 && m2.rows > 0 && m2.cols > 0 && dest.rows > 0 && dest.cols > 0 &&
+               "Zero-dimension matrix passed to GEMM");
         
-        if (m1_effective_cols != m2_effective_rows) {
-            throw std::invalid_argument("Matrix dimensions do not match for multiplication after transpose.");
+        if (m1.cols != m2.rows) {
+            throw std::invalid_argument("Matrix dimensions do not match for multiplication.");
+        }
+        
+        if (dest.rows != m1.rows || dest.cols != m2.cols) {
+            throw std::invalid_argument("Destination matrix dimensions do not match result dimensions.");
         }
 
-        Matrix result(m1_effective_rows, m2_effective_cols, q);
-
-        // Using oneMKL's gemm function with transpose flags
         try {
             oneapi::mkl::blas::row_major::gemm(
                 q,
-                transpose_m1 ? oneapi::mkl::transpose::trans : oneapi::mkl::transpose::nontrans,
-                transpose_m2 ? oneapi::mkl::transpose::trans : oneapi::mkl::transpose::nontrans,
-                m1_effective_rows,
-                m2_effective_cols,
-                m1_effective_cols,
+                oneapi::mkl::transpose::nontrans,
+                oneapi::mkl::transpose::nontrans,
+                m1.rows,
+                m2.cols,
+                m1.cols,
                 1.0f,
                 m1.data, // USM pointer
-                m1.cols, // Leading dimension of original matrix
+                m1.cols, // lda - leading dimension (cols for row-major)
                 m2.data, // USM pointer
-                m2.cols, // Leading dimension of original matrix
+                m2.cols, // ldb - leading dimension (cols for row-major)
                 0.0f,
-                result.data, // USM pointer
-                result.cols,
-                deps  // Event dependencies
+                dest.data, // USM pointer
+                dest.cols // ldc - leading dimension (cols for row-major)
             );
         }
         catch (sycl::exception const& e) {
-            std::cerr << "SYCL exception caught during transpose GEMM: " << e.what() << std::endl;
+            std::cerr << "SYCL exception caught during static GEMM to dest: " << e.what() << std::endl;
         }
-
-        return result;
     }
+
+    // helper – single compilation unit
+    static Matrix mult_T(const Matrix& A,
+        const Matrix& B,
+        bool At, bool Bt,
+        sycl::queue& q)
+    {
+        auto trans_A = At ? oneapi::mkl::transpose::trans
+            : oneapi::mkl::transpose::nontrans;
+        auto trans_B = Bt ? oneapi::mkl::transpose::trans
+            : oneapi::mkl::transpose::nontrans;
+
+        int M = At ? A.cols : A.rows;   // rows  of op(A)
+        int N = Bt ? B.rows : B.cols;   // cols  of op(B)
+        int K = At ? A.rows : A.cols;   // inner dimension
+
+        if ((At ? A.rows : A.cols) != (Bt ? B.cols : B.rows))
+            throw std::invalid_argument("mult_T: dimension mismatch.");
+
+        Matrix C(M, N, q);
+
+        //   In row‑major the leading dimension is ALWAYS “original cols”.
+        std::int64_t lda = A.cols;
+        std::int64_t ldb = B.cols;
+        std::int64_t ldc = C.cols;      // = N
+
+        oneapi::mkl::blas::row_major::gemm(
+            q, trans_A, trans_B,
+            M, N, K,
+            1.0f,
+            A.data, lda,
+            B.data, ldb,
+            0.0f,
+            C.data, ldc);
+
+        return C;
+    }
+
+    static void mult_T(const Matrix& A,
+        const Matrix& B,
+        bool At, bool Bt,
+        Matrix& C,
+        sycl::queue& q)
+    {
+        auto trans_A = At ? oneapi::mkl::transpose::trans
+            : oneapi::mkl::transpose::nontrans;
+        auto trans_B = Bt ? oneapi::mkl::transpose::trans
+            : oneapi::mkl::transpose::nontrans;
+
+        int M = At ? A.cols : A.rows;   // rows  of op(A)
+        int N = Bt ? B.rows : B.cols;   // cols  of op(B)
+        int K = At ? A.rows : A.cols;   // inner dimension
+
+        if (K != (Bt ? B.cols : B.rows))
+            throw std::invalid_argument("mult_T: dimension mismatch.");
+        
+        if (C.rows != M || C.cols != N)
+            throw std::invalid_argument("mult_T: destination C has incorrect dimensions.");
+
+
+        // In row‑major the leading dimension is ALWAYS “original cols”.
+        std::int64_t lda = A.cols;
+        std::int64_t ldb = B.cols;
+        std::int64_t ldc = C.cols;
+
+        oneapi::mkl::blas::row_major::gemm(
+            q, trans_A, trans_B,
+            M, N, K,
+            1.0f,
+            A.data, lda,
+            B.data, ldb,
+            0.0f,
+            C.data, ldc);
+    }
+
 
     void elementWiseMult(const Matrix& other) {
         if (rows == other.rows && cols == other.cols) {
@@ -589,14 +634,49 @@ public:
         return Matrix(); // Needs a queue or default constructor with nullptr
     }
 
-    // DELETED: transpose() function to avoid expensive host-device copies
-    // Use oneMKL GEMM with transpose flags instead: oneapi::mkl::transpose::trans
+    static void ElementWiseMult(const Matrix& m1, const Matrix& m2, Matrix& dest, sycl::queue& q) {
+        if (m1.rows != m2.rows || m1.cols != m2.cols) {
+            throw std::invalid_argument("Matrix dimensions must be equal for element-wise multiplication.");
+        }
+        if (dest.rows != m1.rows || dest.cols != m1.cols) {
+            throw std::invalid_argument("Destination matrix has incorrect dimensions.");
+        }
+        
+        int r = m1.rows;
+        int c = m1.cols;
+        const float* ptrA = m1.data;
+        const float* ptrB = m2.data;
+        float* ptrC = dest.data;
 
-    // DELETED: Transpose() function to avoid expensive host-device copies
-    // Use oneMKL GEMM with transpose flags instead: oneapi::mkl::transpose::trans
+        q.submit([&](handler& h) {
+            auto a = ptrA;
+            auto b = ptrB;
+            auto cacc = ptrC;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                cacc[i] = a[i] * b[i];
+            });
+        });
+    }
+
     Matrix Transpose() const {
-        // This function should not be used - use GEMM with transpose flags instead
-        throw std::runtime_error("Transpose() function has been deleted for performance. Use GEMM with transpose flags.");
+        Matrix output(cols, rows, *q_ptr);
+        
+        const int inputRows = rows;
+        const int inputCols = cols;
+        const float* inputPtr = data;
+        float* outputPtr = output.data;
+
+        // Use 2D parallel_for for efficient memory access patterns
+        q_ptr->submit([&](handler& h) {
+            h.parallel_for(range<2>(inputRows, inputCols), [=](id<2> idx) {
+                int i = idx[0]; // row in input
+                int j = idx[1]; // col in input
+                // Transpose: input[i][j] -> output[j][i]
+                outputPtr[j * inputRows + i] = inputPtr[i * inputCols + j];
+            });
+        });
+
+        return output;
     }
 
     static float Sigmoid(float x) {
@@ -673,6 +753,44 @@ public:
         return output;
     }
 
+    static void ApplyReLU(const Matrix& m, Matrix& dest, sycl::queue& q) {
+        if (m.rows != dest.rows || m.cols != dest.cols) {
+            throw std::invalid_argument("Destination matrix dimensions do not match source for ApplyReLU.");
+        }
+        int r = m.rows;
+        int c = m.cols;
+
+        const float* ptrA = m.data;
+        float* ptrOut = dest.data;
+
+        q.submit([&](handler& h) {
+            auto a = ptrA;
+            auto b = ptrOut;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                b[i] = ReLU(a[i]);
+            });
+        });
+    }
+
+    static void ApplyReLUDerivative(const Matrix& m, Matrix& dest, sycl::queue& q) {
+        if (m.rows != dest.rows || m.cols != dest.cols) {
+            throw std::invalid_argument("Destination matrix dimensions do not match source for ApplyReLUDerivative.");
+        }
+        int r = m.rows;
+        int c = m.cols;
+
+        const float* ptrA = m.data;
+        float* ptrOut = dest.data;
+
+        q.submit([&](handler& h) {
+            auto a = ptrA;
+            auto b = ptrOut;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                b[i] = dReLU(a[i]);
+            });
+        });
+    }
+
     void applySigmoid() {
         int r = rows;
         int c = cols;
@@ -743,38 +861,86 @@ public:
         return output;
     }
 
+    static void ApplySigmoid(const Matrix& m, Matrix& dest, sycl::queue& q) {
+        if (m.rows != dest.rows || m.cols != dest.cols) {
+            throw std::invalid_argument("Destination matrix dimensions do not match source for ApplySigmoid.");
+        }
+        int r = m.rows;
+        int c = m.cols;
+        const float* ptrA = m.data;
+        float* ptrOut = dest.data;
+
+        q.submit([&](handler& h) {
+            auto a = ptrA;
+            auto b = ptrOut;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                b[i] = Sigmoid(a[i]);
+                });
+            });
+    }
+
+    static void ApplySigmoidDerivative(const Matrix& m, Matrix& dest, sycl::queue& q) {
+        if (m.rows != dest.rows || m.cols != dest.cols) {
+            throw std::invalid_argument("Destination matrix dimensions do not match source for ApplySigmoidDerivative.");
+        }
+        int r = m.rows;
+        int c = m.cols;
+        const float* ptrA = m.data;
+        float* ptrOut = dest.data;
+
+        q.submit([&](handler& h) {
+            auto a = ptrA;
+            auto b = ptrOut;
+            h.parallel_for(range<1>(r * c), [=](id<1> i) {
+                b[i] = dSigmoid(a[i]);
+                });
+            });
+    }
+
     Matrix sumAlongAxis(int axis) const {
         if (axis == 1) {
-            Matrix result(rows, 1, *q_ptr);
-            float* ones = const_cast<Matrix*>(this)->getOnesVector(cols);
+            Matrix res(rows, 1, *q_ptr);
             
-            // Use GEMV: result = A * ones_vector (where A is this matrix)
-            // result = 1.0 * data * ones + 0.0 * result
-            try {
-                oneapi::mkl::blas::row_major::gemv(
-                    *q_ptr,
-                    oneapi::mkl::transpose::nontrans,  // trans = nontrans
-                    rows,           // m (rows of A)
-                    cols,           // n (cols of A)
-                    1.0f,           // alpha
-                    data,           // A data (USM pointer)
-                    cols,           // lda (leading dimension of A)
-                    ones,           // x vector (ones vector)
-                    1,              // incx (increment for x)
-                    0.0f,           // beta
-                    result.data,    // y vector (result)
-                    1               // incy (increment for y)
-                );
-            }
-            catch (sycl::exception const& e) {
-                std::cerr << "SYCL exception caught during GEMV: " << e.what() << std::endl;
+            // Bounds check to prevent undefined behavior
+            if (cols == 0 || rows == 0) {
+                return res; // Return zero-initialized matrix
             }
             
-            return result;
+            int N = cols;
+            auto ptr = data;
+            auto out = res.data;
+            q_ptr->submit([&](handler& h) {
+                h.parallel_for(range<1>(rows), [=](id<1> i) {
+                    float s = 0;
+                    for (int j = 0; j < N; ++j) s += ptr[i[0] * N + j];
+                    out[i] = s;
+                });
+            });
+            return res;
         }
         else {
             throw std::invalid_argument("Only axis 1 is implemented.");
         }
+    }
+
+    void sumAlongAxis(int axis, Matrix& dest) const {
+        if (axis != 1) {
+            throw std::invalid_argument("Only axis 1 is implemented.");
+        }
+        if (dest.rows != this->rows || dest.cols != 1) {
+            throw std::invalid_argument("Destination matrix for sumAlongAxis must have 1 column and same number of rows as source.");
+        }
+
+        int N = cols;
+        auto ptr = data;
+        auto out = dest.data;
+        q_ptr->submit([&](handler& h) {
+            h.parallel_for(range<1>(rows), [=](id<1> i) {
+                float s = 0;
+                for (int j = 0; j < N; ++j) s += ptr[i[0] * N + j];
+                out[i] = s;
+                });
+            });
     }
 
     static Matrix fromArr(const vector<float>& arr, sycl::queue& q) {
@@ -791,55 +957,74 @@ public:
 
     static Matrix Softmax(const Matrix& m, sycl::queue& q) {
         Matrix out(m.rows, m.cols, q);
+        Softmax(m, out, q);
+        return out;
+    }
+
+    static void Softmax(const Matrix& m, Matrix& out, sycl::queue& q) {
+        if (m.rows != out.rows || m.cols != out.cols) {
+            throw std::invalid_argument("Input and output matrices must have same dimensions for Softmax.");
+        }
         int R = m.rows, C = m.cols;
         const float* A = m.data;
         float* B = out.data;
 
-        // Use work-groups with local memory for efficient row reduction
-        const int local_size = 256; // Workgroup size
-        
+        // Re-use shared scratch buffers to avoid excessive device allocations
+        if (static_cast<std::size_t>(C) > softmax_capacity) {
+            // Ensure any previous kernels using the buffers are complete
+            q.wait_and_throw();
+            if (softmax_tmp_max)  sycl::free(softmax_tmp_max, q);
+            if (softmax_tmp_sum)  sycl::free(softmax_tmp_sum, q);
+
+            softmax_tmp_max  = sycl::malloc_shared<float>(C, q);
+            softmax_tmp_sum  = sycl::malloc_shared<float>(C, q);
+            softmax_capacity = static_cast<std::size_t>(C);
+        }
+
+        float* max_vals = softmax_tmp_max;
+        float* sums     = softmax_tmp_sum;
+
+        // Kernel 1: Find max value and sum of exps for each column
         q.submit([&](sycl::handler& h) {
-            // Local memory for reduction operations
-            sycl::accessor<float, 1, sycl::access::mode::read_write, sycl::access::target::local> 
-                local_max(sycl::range<1>(local_size), h);
-            sycl::accessor<float, 1, sycl::access::mode::read_write, sycl::access::target::local> 
-                local_sum(sycl::range<1>(local_size), h);
-            
-            h.parallel_for(sycl::nd_range<1>(sycl::range<1>((C + local_size - 1) / local_size * local_size), 
-                                           sycl::range<1>(local_size)),
-                          [=](sycl::nd_item<1> item) {
-                int gid = item.get_global_id(0);
-                int lid = item.get_local_id(0);
-                int group_id = item.get_group(0);
-                
-                if (gid >= C) return; // Check bounds
-                
-                // Phase 1: Find max for this column
-                float max_val = -std::numeric_limits<float>::infinity();
-                for (int r = 0; r < R; r++) {
-                    max_val = sycl::max(max_val, A[r * C + gid]);
+            h.parallel_for(sycl::range<1>(C), [=](sycl::id<1> id) {
+                int col = id[0];
+
+                // 1. Find per-column max
+                float maxv = -std::numeric_limits<float>::infinity();
+                for (int r_idx = 0; r_idx < R; ++r_idx) {
+                    maxv = sycl::max(maxv, A[r_idx * C + col]);
                 }
-                local_max[lid] = max_val;
-                item.barrier(sycl::access::fence_space::local_space);
-                
-                // Reduce max within workgroup (though each thread handles one column)
-                // This step is mainly for future extensibility
-                
-                // Phase 2: Compute sum of exp(x - max)
-                float sum_exp = 0.0f;
-                for (int r = 0; r < R; r++) {
-                    sum_exp += sycl::exp(A[r * C + gid] - max_val);
+                max_vals[col] = maxv;
+
+                // 2. Compute sum of exps
+                float sum = 0.0f;
+                for (int r_idx = 0; r_idx < R; ++r_idx) {
+                    sum += sycl::exp(A[r_idx * C + col] - maxv);
                 }
-                local_sum[lid] = sum_exp;
-                item.barrier(sycl::access::fence_space::local_space);
+                sums[col] = sum;
+            });
+        }).wait(); // Wait for max/sum to be computed before normalization
+
+        // Kernel 2: Normalize
+        q.submit([&](sycl::handler& h) {
+            h.parallel_for(sycl::range<2>(R, C), [=](sycl::id<2> id) {
+                int row = id[0];
+                int col = id[1];
+                float maxv = max_vals[col];
+                float sum = sums[col];
                 
-                // Phase 3: Write normalized values
-                for (int r = 0; r < R; r++) {
-                    B[r * C + gid] = sycl::exp(A[r * C + gid] - max_val) / sum_exp;
+                // 3. Write normalized value
+                if (sum > 0) { // Avoid division by zero
+                    B[row * C + col] = sycl::exp(A[row * C + col] - maxv) / sum;
+                } else {
+                    B[row * C + col] = 0.0f;
                 }
             });
         });
-        return out;
+
+        // NOTE: We do not free the shared scratch buffers here; they are reused.
+        // They will be freed automatically at program termination, or can be
+        // manually resized in future calls when a larger capacity is needed.
     }
 
     static float crossEntropy(const Matrix& outputs, const Matrix& targets, sycl::queue& q) {
@@ -871,9 +1056,7 @@ public:
     }
 };
 
-// Static member definitions
-std::map<std::pair<sycl::queue*, int>, float*> Matrix::ones_cache;
-std::map<std::tuple<sycl::queue*, int, int>, std::vector<float*>> Matrix::memory_pool;
+
 
 // template <>
 // struct is_device_copyable<Matrix> : std::true_type {}; 

@@ -279,7 +279,7 @@ void batchTrain(int batchSize, int numEpochs) {
             // Adjust batch size for last incomplete batch
             int currentBatchSize = std::min(batchSize, static_cast<int>(trainingSet.size() - i));
 
-            vector<vector<float>> batchInputs(currentBatchSize, vector<float>(3072)); // CIFAR-10 is 3072
+            vector<vector<float>> batchInputs(currentBatchSize, vector<float>(784)); // MNIST is 784 (28x28)
             vector<vector<float>> batchOutputs(currentBatchSize, vector<float>(globalOutputNodesCount));
 
             // Populate batch data
